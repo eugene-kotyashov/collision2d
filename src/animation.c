@@ -126,39 +126,21 @@ void CloseSDL(SDL_Window *window) {
 //     }
 // }
 
-
-void RunRigidBodySimulation(SDL_Renderer *renderer) {
-    float totalSimulationTime = 1000; 
-    float currentTime = 0; 
-    float dt = 1.0 / 60.0; 
-
-    InitializeRigidBodies(renderer);
-
-    while (currentTime < totalSimulationTime) {
-        for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-            RigidBody *rigidBody = &rigidBodies[i];
-            ComputeForceAndTorque(rigidBody);
-            //ПОменять метод Эйлера на метод средней точки
-            Vector2 linearAcceleration = (Vector2){rigidBody->force.x / rigidBody->shape.mass, rigidBody->force.y / rigidBody->shape.mass};
-            rigidBody->linearVelocity.x += linearAcceleration.x * dt;
-            rigidBody->linearVelocity.y += linearAcceleration.y * dt;
-            rigidBody->position.x += rigidBody->linearVelocity.x * dt;
-            rigidBody->position.y += rigidBody->linearVelocity.y * dt;
-            float angularAcceleration = rigidBody->torque / rigidBody->shape.momentOfInertia;
-            rigidBody->angularVelocity += angularAcceleration * dt;
-            rigidBody->angle += rigidBody->angularVelocity * dt;
-            
-        }
-
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); 
-        SDL_RenderClear(renderer);
-
-        DrawRigidBodies(renderer);
-
-        SDL_RenderPresent(renderer);
-
-        SDL_Delay(dt * 1000); // конвертируем
-        currentTime += dt;
+void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
+{
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+        RigidBody *rigidBody = &rigidBodies[i];
+        ComputeForceAndTorque(rigidBody);
+        // ПОменять метод Эйлера на метод средней точки
+        Vector2 linearAcceleration = (Vector2){rigidBody->force.x / rigidBody->shape.mass, rigidBody->force.y / rigidBody->shape.mass};
+        rigidBody->linearVelocity.x += linearAcceleration.x * dt;
+        rigidBody->linearVelocity.y += linearAcceleration.y * dt;
+        rigidBody->position.x += rigidBody->linearVelocity.x * dt;
+        rigidBody->position.y += rigidBody->linearVelocity.y * dt;
+        float angularAcceleration = rigidBody->torque / rigidBody->shape.momentOfInertia;
+        rigidBody->angularVelocity += angularAcceleration * dt;
+        rigidBody->angle += rigidBody->angularVelocity * dt;
     }
 }
 
@@ -171,8 +153,48 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    RunRigidBodySimulation(renderer);
+    float totalSimulationTime = 1000; 
+    float currentTime = 0; 
+    float dt = 1.0 / 60.0; 
 
+    InitializeRigidBodies(renderer);
+
+    SDL_Event e;
+    int quit = 0;
+    while (quit == 0)
+    {
+        if (currentTime < totalSimulationTime)
+        {
+            RunRigidBodySimulation(renderer, dt);
+            currentTime += dt;
+            SDL_Delay(dt * 1000); // конвертируем
+        }
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); 
+        SDL_RenderClear(renderer);
+
+        DrawRigidBodies(renderer);
+
+        SDL_RenderPresent(renderer);
+
+        while (SDL_PollEvent(&e))
+        {
+            if (e.type == SDL_QUIT)
+            {
+                quit = 1;
+            }
+            if (e.type == SDL_KEYDOWN)
+            {
+                quit = 1;
+            }
+            if (e.type == SDL_MOUSEBUTTONDOWN)
+            {
+                quit = 1;
+            }
+        }
+    }
+    
+    
     CloseSDL(window);
     return 0;
 }
