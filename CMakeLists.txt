@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.29)
+project (Collision2D)
+find_package(SDL2 REQUIRED)
+add_executable(${PROJECT_NAME} src/animation.c)
+target_link_libraries(${PROJECT_NAME} SDL2::SDL2 SDL2::SDL2main)
