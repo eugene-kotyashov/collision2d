@@ -8,6 +8,7 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
 #define NUM_RIGID_BODIES 7
+#define BODY_CENTER_TEXTURE_SIZE 10
 //тело должно получить момент импульса при оталкивании
 //добавить стокновения 
 // колизия записки бара
@@ -22,6 +23,7 @@ typedef struct {
     float height;
     float mass;
     float momentOfInertia;
+    Vector2 endpoints[4];
 } BoxShape;
 
 typedef struct {
@@ -35,6 +37,54 @@ typedef struct {
 } RigidBody;
 
 RigidBody rigidBodies[NUM_RIGID_BODIES];
+
+float dotProduct(Vector2* v1, Vector2* v2) {
+    return v1->x*v2->x + v1->y*v2->y;
+}
+
+float length(Vector2* v) {
+    return sqrt(dotProduct(v, v));
+}
+
+Vector2 normalize(Vector2* v) {
+    float len = length(v);
+    Vector2 result;
+    result.x = v->x/len;
+    result.y = v->y/len;
+    return result;
+}
+
+float pointToLineDistance(Vector2 pt1, Vector2 pt2, Vector2 p) {
+    Vector2 lineV = { pt2.x - pt1.x, pt2.y - pt1.y };
+    Vector2 lineVnorm = normalize(&lineV);
+    Vector2 pointMinusLineStartV = { p.x - pt1.x, p.y - pt1.y};
+    float projLen = dotProduct(&pointMinusLineStartV, &lineVnorm);
+    Vector2 projV = { projLen*lineVnorm.x, projLen*lineVnorm.y};
+    Vector2 ptToLineDistV = { 
+        pointMinusLineStartV.x - projV.x,
+        pointMinusLineStartV.y - projV.y
+    };
+    return length(&ptToLineDistV);
+}
+
+void testGeometryFunctions() {
+    Vector2 v1 = {1, 1};
+    Vector2 v2 = {2, 2};
+    float dot = dotProduct(&v1, &v2);
+    Vector2 v1norm = normalize(&v1);
+    printf("v1:(%e, %e) v2:(%e, %e)\n", v1.x, v1.y, v2.x, v2.y);
+    printf("dot %e\n", dot);
+    printf("nor v1:(%e, %e)\n", v1norm.x, v1norm.y);
+    Vector2 origin = {0, 0};
+    Vector2 xAxis = {3, 0};
+    Vector2 yAxis = {0, 10};
+    Vector2 pt1 = { 1, 1};
+    printf(
+        "pt1 both dists has to be 1, actial is %e %e\n ",
+        pointToLineDistance(origin, xAxis, pt1),
+        pointToLineDistance(origin, yAxis, pt1)
+    );
+}
 
 void CalculateBoxInertia(BoxShape *boxShape) {
     float m = boxShape->mass;
@@ -53,6 +103,21 @@ void ComputeForceAndTorque(RigidBody *rigidBody) {
 SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
 SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
 
+
+Vector2 getShapeWorldCoords(RigidBody* body, int pointIndex) {
+    Vector2 result = {INFINITY, INFINITY};
+    Vector2 localPoint = body->shape.endpoints[pointIndex];
+    float cs = cos(M_PI*body->angle/180);
+    float sc = sin(M_PI*body->angle/180);
+    // rotation
+    result.x = localPoint.x*cs - localPoint.y*sc;
+    result.y = localPoint.x*sc + localPoint.y*cs;
+    // translation
+    result.x += body->position.x;
+    result.y += body->position.y;
+    return result;
+}
+
 void InitializeRigidBodies(SDL_Renderer *renderer) {
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         RigidBody *rigidBody = &rigidBodies[i];
@@ -62,10 +127,19 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
 
         BoxShape shape;
         shape.mass = 1;
-        shape.width = (1 + rand() % 2 )* 30;
+        shape.width = (1 + rand() % 2 )* 100;
         shape.height = (1 + rand() % 2 )* 30;
+        shape.endpoints[0].x = -0.5*shape.width, 
+        shape.endpoints[0].y = -0.5*shape.height;
+        shape.endpoints[1].x = 0.5*shape.width;
+        shape.endpoints[1].y = -0.5*shape.height;
+        shape.endpoints[2].x =  0.5*shape.width;
+        shape.endpoints[2].y = 0.5*shape.height;
+        shape.endpoints[3].x = -0.5*shape.width;
+        shape.endpoints[3].y = 0.5*shape.height;
         CalculateBoxInertia(&shape);
         rigidBody->shape = shape;
+
 
         // создаем текстуры для тела
         SDL_Surface *surface = SDL_CreateRGBSurface(0, shape.width, shape.height, 32, 0, 0, 0, 0);
@@ -73,7 +147,7 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         rigidBodyTextures[i] = SDL_CreateTextureFromSurface(renderer, surface);
         SDL_FreeSurface(surface);
         // текстура для центральной точки тела
-        surface = SDL_CreateRGBSurface(0, 0.1*shape.width, 0.1*shape.height, 32, 0, 0, 0, 0);
+        surface = SDL_CreateRGBSurface(0, BODY_CENTER_TEXTURE_SIZE, BODY_CENTER_TEXTURE_SIZE, 32, 0, 0, 0, 0);
         SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 0, 0));
         bodyCentersTextures[i] = SDL_CreateTextureFromSurface(renderer, surface);
         SDL_FreeSurface(surface);
@@ -104,6 +178,7 @@ void DrawRigidBodies(SDL_Renderer *renderer)
     {
 
         RigidBody *rigidBody = &rigidBodies[i];
+        float angle = rigidBody->angle;
         SDL_Point bodyCenter = {rigidBody->position.x, rigidBody->position.y};
         SDL_Rect dstrect = {
             (int)(rigidBody->position.x - 0.5 * rigidBody->shape.width),
@@ -116,26 +191,36 @@ void DrawRigidBodies(SDL_Renderer *renderer)
             rigidBodyTextures[i],
             NULL,
             &dstrect,
-            rigidBody->angle,
+            angle,
             NULL,
             SDL_FLIP_NONE
         );
 
         SDL_Rect centerRect = {
-            (int)(rigidBody->position.x - 0.05 * rigidBody->shape.width),
-            (int)(rigidBody->position.y - 0.05 * rigidBody->shape.height),
-            (int)(0.1 * rigidBody->shape.width),
-            (int)(0.1 * rigidBody->shape.height)
+            (int)(rigidBody->position.x - 0.5 * BODY_CENTER_TEXTURE_SIZE),
+            (int)(rigidBody->position.y - 0.5 * BODY_CENTER_TEXTURE_SIZE),
+            BODY_CENTER_TEXTURE_SIZE,
+            BODY_CENTER_TEXTURE_SIZE
         };
         SDL_RenderCopyEx(
             renderer,
             bodyCentersTextures[i],
             NULL,
             &centerRect,
-            rigidBody->angle,
+            angle,
             NULL,
             SDL_FLIP_NONE
         );
+        Vector2 p1 = getShapeWorldCoords(rigidBody, 0);
+        Vector2 p2 = getShapeWorldCoords(rigidBody, 1);
+        Vector2 p3 = getShapeWorldCoords(rigidBody, 2);
+        Vector2 p4 = getShapeWorldCoords(rigidBody, 3);
+        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 1);
+        SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+        SDL_RenderDrawLine(renderer, p2.x, p2.y, p3.x, p3.y);
+        SDL_RenderDrawLine(renderer, p3.x, p3.y, p4.x, p4.y);
+        SDL_RenderDrawLine(renderer, p4.x, p4.y, p1.x, p1.y);
+        
     }
 }
 
@@ -194,6 +279,8 @@ int main() {
         CloseSDL(window);
         exit(EXIT_FAILURE);
     }
+
+    testGeometryFunctions();
 
     float totalSimulationTime = 1000; 
     float currentTime = 0; 
