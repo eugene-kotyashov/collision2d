@@ -51,13 +51,14 @@ void ComputeForceAndTorque(RigidBody *rigidBody) {
 }
 
 SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
+SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
 
 void InitializeRigidBodies(SDL_Renderer *renderer) {
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         RigidBody *rigidBody = &rigidBodies[i];
         rigidBody->position = (Vector2){rand() % (SCREEN_WIDTH - 50), rand() % (SCREEN_HEIGHT - 50)};
         rigidBody->angle = (rand() % 360) / 360.f * M_PI * 2;
-        rigidBody->linearVelocity = (Vector2){0, 0};
+        rigidBody->linearVelocity = (Vector2){0, -100};
 
         BoxShape shape;
         shape.mass = 1;
@@ -70,6 +71,11 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         SDL_Surface *surface = SDL_CreateRGBSurface(0, shape.width, shape.height, 32, 0, 0, 0, 0);
         SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
         rigidBodyTextures[i] = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_FreeSurface(surface);
+        // текстура для центральной точки тела
+        surface = SDL_CreateRGBSurface(0, 0.1*shape.width, 0.1*shape.height, 32, 0, 0, 0, 0);
+        SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 0, 0));
+        bodyCentersTextures[i] = SDL_CreateTextureFromSurface(renderer, surface);
         SDL_FreeSurface(surface);
     }
 }
@@ -92,39 +98,71 @@ SDL_Window *InitSDL() {
     return window;
 }
 
-void DrawRigidBodies(SDL_Renderer *renderer) {
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+void DrawRigidBodies(SDL_Renderer *renderer)
+{
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+
         RigidBody *rigidBody = &rigidBodies[i];
-        SDL_Rect dstrect = {(int)rigidBody->position.x, (int)rigidBody->position.y, (int)rigidBody->shape.width, (int)rigidBody->shape.height};
-        SDL_RenderCopyEx(renderer, rigidBodyTextures[i], NULL, &dstrect, rigidBody->angle, NULL, SDL_FLIP_NONE);
+        SDL_Point bodyCenter = {rigidBody->position.x, rigidBody->position.y};
+        SDL_Rect dstrect = {
+            (int)(rigidBody->position.x - 0.5 * rigidBody->shape.width),
+            (int)(rigidBody->position.y - 0.5 * rigidBody->shape.height),
+            (int)(rigidBody->shape.width),
+            (int)(rigidBody->shape.height)
+        };
+        SDL_RenderCopyEx(
+            renderer,
+            rigidBodyTextures[i],
+            NULL,
+            &dstrect,
+            rigidBody->angle,
+            NULL,
+            SDL_FLIP_NONE
+        );
+
+        SDL_Rect centerRect = {
+            (int)(rigidBody->position.x - 0.05 * rigidBody->shape.width),
+            (int)(rigidBody->position.y - 0.05 * rigidBody->shape.height),
+            (int)(0.1 * rigidBody->shape.width),
+            (int)(0.1 * rigidBody->shape.height)
+        };
+        SDL_RenderCopyEx(
+            renderer,
+            bodyCentersTextures[i],
+            NULL,
+            &centerRect,
+            rigidBody->angle,
+            NULL,
+            SDL_FLIP_NONE
+        );
     }
 }
-
 
 void CloseSDL(SDL_Window *window) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 }
 
-//очень плохо
-// void DetectCollision(RigidBody *rigidBody) {
-//     // Столкновение с границами окна
-//     if (rigidBody->position.x < 0) {
-//         rigidBody->position.x = 0;
-//         rigidBody->linearVelocity.x = -rigidBody->linearVelocity.x;
-//     } else if (rigidBody->position.x + rigidBody->shape.width > SCREEN_WIDTH) {
-//         rigidBody->position.x = SCREEN_WIDTH - rigidBody->shape.width;
-//         rigidBody->linearVelocity.x = -rigidBody->linearVelocity.x;
-//     }
 
-//     if (rigidBody->position.y < 0) {
-//         rigidBody->position.y = 0;
-//         rigidBody->linearVelocity.y = -rigidBody->linearVelocity.y;
-//     } else if (rigidBody->position.y + rigidBody->shape.height > SCREEN_HEIGHT) {
-//         rigidBody->position.y = SCREEN_HEIGHT - rigidBody->shape.height;
-//         rigidBody->linearVelocity.y = -rigidBody->linearVelocity.y;
-//     }
-// }
+void DetectCollision(RigidBody *rigidBody) {
+    // Столкновение с границами окна
+    if (rigidBody->position.x < 0) {
+        rigidBody->position.x = 0;
+        rigidBody->linearVelocity.x = -rigidBody->linearVelocity.x;
+    } else if (rigidBody->position.x + rigidBody->shape.width > SCREEN_WIDTH) {
+        rigidBody->position.x = SCREEN_WIDTH - rigidBody->shape.width;
+        rigidBody->linearVelocity.x = -rigidBody->linearVelocity.x;
+    }
+
+    if (rigidBody->position.y < 0) {
+        rigidBody->position.y = 0;
+        rigidBody->linearVelocity.y = -rigidBody->linearVelocity.y;
+    } else if (rigidBody->position.y + rigidBody->shape.height > SCREEN_HEIGHT) {
+        rigidBody->position.y = SCREEN_HEIGHT - rigidBody->shape.height;
+        rigidBody->linearVelocity.y = -rigidBody->linearVelocity.y;
+    }
+}
 
 void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
 {
@@ -141,6 +179,10 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
         float angularAcceleration = rigidBody->torque / rigidBody->shape.momentOfInertia;
         rigidBody->angularVelocity += angularAcceleration * dt;
         rigidBody->angle += rigidBody->angularVelocity * dt;
+    }
+    // проверка соударений
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        DetectCollision(&rigidBodies[i]);
     }
 }
 
