@@ -7,8 +7,9 @@
 #endif
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 7
+#define NUM_RIGID_BODIES 1
 #define BODY_CENTER_TEXTURE_SIZE 10
+#define COLLISION_FORCE_VALUE 10000
 //тело должно получить момент импульса при оталкивании
 //добавить стокновения 
 // колизия записки бара
@@ -24,7 +25,12 @@ typedef struct {
     float mass;
     float momentOfInertia;
     Vector2 endpoints[4];
+    // силы соударений действующие на каждую верщину 
+    // заданы в мировой системе координат
+    Vector2 collisionEndpointForces[4];
 } BoxShape;
+
+
 
 typedef struct {
     Vector2 position;
@@ -54,7 +60,8 @@ Vector2 normalize(Vector2* v) {
     return result;
 }
 
-float pointToLineDistance(Vector2 pt1, Vector2 pt2, Vector2 p) {
+float pointToLineDistance(
+    Vector2 pt1, Vector2 pt2, Vector2 p, Vector2* pointToLineV) {
     Vector2 lineV = { pt2.x - pt1.x, pt2.y - pt1.y };
     Vector2 lineVnorm = normalize(&lineV);
     Vector2 pointMinusLineStartV = { p.x - pt1.x, p.y - pt1.y};
@@ -64,6 +71,9 @@ float pointToLineDistance(Vector2 pt1, Vector2 pt2, Vector2 p) {
         pointMinusLineStartV.x - projV.x,
         pointMinusLineStartV.y - projV.y
     };
+    if (pointToLineV != NULL) {
+        *pointToLineV = ptToLineDistV;
+    }
     return length(&ptToLineDistV);
 }
 
@@ -81,28 +91,10 @@ void testGeometryFunctions() {
     Vector2 pt1 = { 1, 1};
     printf(
         "pt1 both dists has to be 1, actial is %e %e\n ",
-        pointToLineDistance(origin, xAxis, pt1),
-        pointToLineDistance(origin, yAxis, pt1)
+        pointToLineDistance(origin, xAxis, pt1, NULL),
+        pointToLineDistance(origin, yAxis, pt1, NULL)
     );
 }
-
-void CalculateBoxInertia(BoxShape *boxShape) {
-    float m = boxShape->mass;
-    float w = boxShape->width;
-    float h = boxShape->height;
-    boxShape->momentOfInertia = m * (w * w + h * h) / 12;
-}
-
-void ComputeForceAndTorque(RigidBody *rigidBody) {
-    Vector2 f = (Vector2){10, 50};
-    rigidBody->force = f;
-    Vector2 r = (Vector2){rigidBody->shape.width / 2, rigidBody->shape.height / 2};
-    rigidBody->torque = r.x * f.y - r.y * f.x;
-}
-
-SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
-SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
-
 
 Vector2 getShapeWorldCoords(RigidBody* body, int pointIndex) {
     Vector2 result = {INFINITY, INFINITY};
@@ -117,6 +109,38 @@ Vector2 getShapeWorldCoords(RigidBody* body, int pointIndex) {
     result.y += body->position.y;
     return result;
 }
+
+void CalculateBoxInertia(BoxShape *boxShape) {
+    float m = boxShape->mass;
+    float w = boxShape->width;
+    float h = boxShape->height;
+    boxShape->momentOfInertia = m * (w * w + h * h) / 12;
+}
+
+void ComputeForceAndTorque(RigidBody *rigidBody) {
+    // глобальная сила действующая не зависимо от соударений
+    Vector2 f = {0, 50};
+    rigidBody->force = f;
+    rigidBody->torque = 0;
+    int i =0;
+    for (i=0; i<4; ++i) {
+        Vector2 endpointForce = rigidBody->shape.collisionEndpointForces[i];
+        rigidBody->force.x += endpointForce.x;
+        rigidBody->force.y += endpointForce.y;
+        // радус вектор верщины участвующей в столкновении
+        Vector2 worldEndpoint = getShapeWorldCoords(rigidBody, i);
+        Vector2 r = {worldEndpoint.x - rigidBody->position.x,
+                    worldEndpoint.y - rigidBody->position.y
+        };
+
+        float endpointTorque = r.x*endpointForce.y - r.y*endpointForce.x;
+        rigidBody->torque += endpointTorque;
+    }
+    
+}
+
+SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
+SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
 
 void InitializeRigidBodies(SDL_Renderer *renderer) {
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
@@ -137,9 +161,15 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         shape.endpoints[2].y = 0.5*shape.height;
         shape.endpoints[3].x = -0.5*shape.width;
         shape.endpoints[3].y = 0.5*shape.height;
+
+        Vector2 zeroVec = {0, 0};
+        shape.collisionEndpointForces[0] = zeroVec;
+        shape.collisionEndpointForces[1] = zeroVec;
+        shape.collisionEndpointForces[2] = zeroVec;
+        shape.collisionEndpointForces[3] = zeroVec;
+
         CalculateBoxInertia(&shape);
         rigidBody->shape = shape;
-
 
         // создаем текстуры для тела
         SDL_Surface *surface = SDL_CreateRGBSurface(0, shape.width, shape.height, 32, 0, 0, 0, 0);
@@ -230,6 +260,52 @@ void CloseSDL(SDL_Window *window) {
 }
 
 
+void DetectCollisionNew(RigidBody *rigidBody) {
+    // detect collision with screen borders
+    // screen bottom
+    Vector2 screenBottom[2] = { 
+        {0, SCREEN_HEIGHT}, {SCREEN_WIDTH, SCREEN_HEIGHT}
+    };
+    Vector2 screenBottomNormal = {0, -1};
+    int i=0;
+    for (i=0; i<4; ++i) {
+        Vector2 bodyPointWorld = getShapeWorldCoords(rigidBody, i);
+        Vector2 pointToLineV;
+        float distance = pointToLineDistance(
+            screenBottom[0], screenBottom[1], bodyPointWorld, &pointToLineV
+        );
+        float pointLineNormalDot = dotProduct(
+            &pointToLineV, &screenBottomNormal
+        );
+        
+        if (pointLineNormalDot < 0) {
+            // rpobably chack if projection of endpoint is 
+            // between bottom line endpoints 
+            rigidBody->shape.collisionEndpointForces[i].x = 
+                COLLISION_FORCE_VALUE*screenBottomNormal.x;
+            rigidBody->shape.collisionEndpointForces[i].y = 
+                COLLISION_FORCE_VALUE*screenBottomNormal.y;
+        } else {
+            rigidBody->shape.collisionEndpointForces[i].x = 
+                0;
+            rigidBody->shape.collisionEndpointForces[i].y = 
+                0;
+        }
+
+        if (i == 0) {
+            printf(
+                " %d: %.2e %.2e (%.2e, %.2e)",
+                i, distance, pointLineNormalDot,
+                rigidBody->shape.collisionEndpointForces[i].x,
+                rigidBody->shape.collisionEndpointForces[i].y
+            );
+        }
+    }
+    printf("\n");
+
+}
+
+
 void DetectCollision(RigidBody *rigidBody) {
     // Столкновение с границами окна
     if (rigidBody->position.x < 0) {
@@ -267,7 +343,8 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
     }
     // проверка соударений
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        DetectCollision(&rigidBodies[i]);
+        // DetectCollision(&rigidBodies[i]);
+        DetectCollisionNew(&rigidBodies[i]);
     }
 }
 
