@@ -7,7 +7,7 @@
 #endif
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 1
+#define NUM_RIGID_BODIES 7
 #define BODY_CENTER_TEXTURE_SIZE 10
 #define COLLISION_FORCE_VALUE 10000
 //тело должно получить момент импульса при оталкивании
@@ -119,7 +119,7 @@ void CalculateBoxInertia(BoxShape *boxShape) {
 
 void ComputeForceAndTorque(RigidBody *rigidBody) {
     // глобальная сила действующая не зависимо от соударений
-    Vector2 f = {0, 50};
+    Vector2 f = {0, 0};
     rigidBody->force = f;
     rigidBody->torque = 0;
     int i =0;
@@ -139,6 +139,8 @@ void ComputeForceAndTorque(RigidBody *rigidBody) {
     
 }
 
+
+
 SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
 SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
 
@@ -147,7 +149,8 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         RigidBody *rigidBody = &rigidBodies[i];
         rigidBody->position = (Vector2){rand() % (SCREEN_WIDTH - 50), rand() % (SCREEN_HEIGHT - 50)};
         rigidBody->angle = (rand() % 360) / 360.f * M_PI * 2;
-        rigidBody->linearVelocity = (Vector2){0, -100};
+        rigidBody->linearVelocity = (Vector2){100, -100};
+        rigidBody->angularVelocity = 10;
 
         BoxShape shape;
         shape.mass = 1;
@@ -259,39 +262,70 @@ void CloseSDL(SDL_Window *window) {
     SDL_Quit();
 }
 
-
-void DetectCollisionNew(RigidBody *rigidBody) {
-    // detect collision with screen borders
-    // screen bottom
-    Vector2 screenBottom[2] = { 
-        {0, SCREEN_HEIGHT}, {SCREEN_WIDTH, SCREEN_HEIGHT}
-    };
-    Vector2 screenBottomNormal = {0, -1};
-    int i=0;
+void DetectLineSegmentCollision(
+    Vector2 *lineStart,
+    Vector2 *lineEnd,
+    // normal vector pointing outside of the object
+    Vector2 *outerNormal,
+    RigidBody *rigidBody) 
+{
+    int i;
     for (i=0; i<4; ++i) {
         Vector2 bodyPointWorld = getShapeWorldCoords(rigidBody, i);
         Vector2 pointToLineV;
         float distance = pointToLineDistance(
-            screenBottom[0], screenBottom[1], bodyPointWorld, &pointToLineV
+            *lineStart, *lineEnd, bodyPointWorld, &pointToLineV
         );
         float pointLineNormalDot = dotProduct(
-            &pointToLineV, &screenBottomNormal
+            &pointToLineV, outerNormal
         );
-        
-        if (pointLineNormalDot < 0) {
-            // rpobably chack if projection of endpoint is 
-            // between bottom line endpoints 
-            rigidBody->shape.collisionEndpointForces[i].x = 
-                COLLISION_FORCE_VALUE*screenBottomNormal.x;
-            rigidBody->shape.collisionEndpointForces[i].y = 
-                COLLISION_FORCE_VALUE*screenBottomNormal.y;
-        } else {
-            rigidBody->shape.collisionEndpointForces[i].x = 
-                0;
-            rigidBody->shape.collisionEndpointForces[i].y = 
-                0;
-        }
 
+        if (pointLineNormalDot < 0)
+        {
+            // check if projection of endpoint
+            // onto line segment is
+            // between  line endpoints
+            Vector2 pointToLineProjectionPoint = bodyPointWorld;
+            pointToLineProjectionPoint.x += pointToLineV.x;
+            pointToLineProjectionPoint.y += pointToLineV.y;
+            Vector2 lineVector1 = {
+                pointToLineProjectionPoint.x - lineStart->x,
+                pointToLineProjectionPoint.y - lineStart->y};
+            Vector2 lineVector2 = {
+                pointToLineProjectionPoint.x - lineEnd->x,
+                pointToLineProjectionPoint.y - lineEnd->y};
+
+            float dot = dotProduct(&lineVector1, &lineVector2);
+            if (dot < 0)
+            {
+                
+                // adding collision force
+                /*
+                rigidBody->shape.collisionEndpointForces[i].x =
+                    COLLISION_FORCE_VALUE * outerNormal->x;
+                rigidBody->shape.collisionEndpointForces[i].y =
+                    COLLISION_FORCE_VALUE * outerNormal->y;
+                */
+            
+               rigidBody->angularVelocity = -rigidBody->angularVelocity;
+               float velProj = fabs(dotProduct(&rigidBody->linearVelocity, outerNormal));
+               rigidBody->linearVelocity.x = 2.0*velProj*outerNormal->x +
+                    rigidBody->linearVelocity.x;
+               rigidBody->linearVelocity.y = 2.0*velProj*outerNormal->y +
+                    rigidBody->linearVelocity.y ;
+                
+            }
+            else
+            {
+                rigidBody->shape.collisionEndpointForces[i].x =
+                    0;
+                rigidBody->shape.collisionEndpointForces[i].y =
+                    0;
+            }
+
+            break;
+        }
+        /*
         if (i == 0) {
             printf(
                 " %d: %.2e %.2e (%.2e, %.2e)",
@@ -300,9 +334,65 @@ void DetectCollisionNew(RigidBody *rigidBody) {
                 rigidBody->shape.collisionEndpointForces[i].y
             );
         }
+        */
     }
+
     printf("\n");
 
+}
+
+void DetectCollisionNew(RigidBody *rigidBody) {
+    // detect collision with screen borders
+
+    // screen bottom
+    Vector2 screenBottom[2] = { 
+        {0, SCREEN_HEIGHT}, {SCREEN_WIDTH, SCREEN_HEIGHT}
+    };
+    Vector2 screenBottomNormal = {0, -1};
+
+    DetectLineSegmentCollision(
+        &screenBottom[0],
+        &screenBottom[1],
+        &screenBottomNormal,
+        rigidBody
+    );
+    // screen top
+    Vector2 screenTop[2] = { 
+        {0, 0}, {SCREEN_WIDTH, 0}
+    };
+    Vector2 screenTopNormal = {0, 1};
+
+    DetectLineSegmentCollision(
+        &screenTop[0],
+        &screenTop[1],
+        &screenTopNormal,
+        rigidBody
+    );
+
+    // screen left
+    Vector2 screenLeft[2] = { 
+        {0, 0}, {0, SCREEN_HEIGHT}
+    };
+    Vector2 screenLeftNormal = {1, 0};
+
+    DetectLineSegmentCollision(
+        &screenLeft[0],
+        &screenLeft[1],
+        &screenLeftNormal,
+        rigidBody
+    );
+
+    Vector2 screenRight[2] = { 
+        {SCREEN_WIDTH, 0}, {SCREEN_WIDTH, SCREEN_HEIGHT}
+    };
+    Vector2 screenRightNormal = {-1, 0}; 
+
+    DetectLineSegmentCollision(
+        &screenRight[0],
+        &screenRight[1],
+        &screenRightNormal,
+        rigidBody
+    );
 }
 
 
