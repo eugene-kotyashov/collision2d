@@ -7,7 +7,7 @@
 #endif
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 7
+#define NUM_RIGID_BODIES 2
 #define BODY_CENTER_TEXTURE_SIZE 10
 #define COLLISION_FORCE_VALUE 10000
 //тело должно получить момент импульса при оталкивании
@@ -25,6 +25,7 @@ typedef struct {
     float mass;
     float momentOfInertia;
     Vector2 endpoints[4];
+    Vector2 edgeNormals[4];
     // силы соударений действующие на каждую верщину 
     // заданы в мировой системе координат
     Vector2 collisionEndpointForces[4];
@@ -77,6 +78,15 @@ float pointToLineDistance(
     return length(&ptToLineDistV);
 }
 
+Vector2 rotateVector(Vector2* inV, float angleRad) {
+    float cs = cos(angleRad);
+    float sc = sin(angleRad);
+    Vector2 result = {INFINITY, INFINITY};
+    result.x = inV->x*cs - inV->y*sc;
+    result.y = inV->x*sc + inV->y*cs;
+    return result;
+}
+
 void testGeometryFunctions() {
     Vector2 v1 = {1, 1};
     Vector2 v2 = {2, 2};
@@ -94,19 +104,26 @@ void testGeometryFunctions() {
         pointToLineDistance(origin, xAxis, pt1, NULL),
         pointToLineDistance(origin, yAxis, pt1, NULL)
     );
+    Vector2 normal = {1, 1};
+    normal = normalize(&normal);
+    float len = sqrt(dotProduct(&normal, &normal));
+    normal = rotateVector(&normal, 0.25*M_PI);
+    float lenRot = sqrt(dotProduct(&normal, &normal));
+    printf("len %.2e ratated len %.2e", len, lenRot);
 }
 
-Vector2 getShapeWorldCoords(RigidBody* body, int pointIndex) {
+Vector2 transformPointToWorldCoords(
+    Vector2 localPoint,
+    float angleDeg,
+    Vector2 position)
+{
     Vector2 result = {INFINITY, INFINITY};
-    Vector2 localPoint = body->shape.endpoints[pointIndex];
-    float cs = cos(M_PI*body->angle/180);
-    float sc = sin(M_PI*body->angle/180);
-    // rotation
-    result.x = localPoint.x*cs - localPoint.y*sc;
-    result.y = localPoint.x*sc + localPoint.y*cs;
+    float angleRad = M_PI*angleDeg/180;
+    //rotation
+    result = rotateVector(&localPoint, angleRad);
     // translation
-    result.x += body->position.x;
-    result.y += body->position.y;
+    result.x += position.x;
+    result.y += position.y;
     return result;
 }
 
@@ -128,7 +145,10 @@ void ComputeForceAndTorque(RigidBody *rigidBody) {
         rigidBody->force.x += endpointForce.x;
         rigidBody->force.y += endpointForce.y;
         // радус вектор верщины участвующей в столкновении
-        Vector2 worldEndpoint = getShapeWorldCoords(rigidBody, i);
+        Vector2 worldEndpoint = transformPointToWorldCoords(
+            rigidBody->shape.endpoints[i],
+            rigidBody->angle,
+            rigidBody->position );
         Vector2 r = {worldEndpoint.x - rigidBody->position.x,
                     worldEndpoint.y - rigidBody->position.y
         };
@@ -144,18 +164,30 @@ void ComputeForceAndTorque(RigidBody *rigidBody) {
 SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
 SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
 
-void InitializeRigidBodies(SDL_Renderer *renderer) {
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        RigidBody *rigidBody = &rigidBodies[i];
-        rigidBody->position = (Vector2){rand() % (SCREEN_WIDTH - 50), rand() % (SCREEN_HEIGHT - 50)};
-        rigidBody->angle = (rand() % 360) / 360.f * M_PI * 2;
-        rigidBody->linearVelocity = (Vector2){100, -100};
-        rigidBody->angularVelocity = 10;
+void setupRigidBody(
+    RigidBody *rigidBody,
+    Vector2 position,
+    float mass,
+    float angleDegrees,
+    float width,
+    float height,
+    Vector2 linearVelocity,
+    float angularVelocity,
+    SDL_Renderer *renderer,
+    SDL_Texture** drawShapeTexture,
+    SDL_Texture** drawShapeCenterTexture
+    
+    ) {
+    
+        rigidBody->position = position;
+        rigidBody->angle = angleDegrees;
+        rigidBody->linearVelocity = linearVelocity;
+        rigidBody->angularVelocity = angularVelocity;
 
         BoxShape shape;
-        shape.mass = 1;
-        shape.width = (1 + rand() % 2 )* 100;
-        shape.height = (1 + rand() % 2 )* 30;
+        shape.mass = mass;
+        shape.width = width;
+        shape.height = height;
         shape.endpoints[0].x = -0.5*shape.width, 
         shape.endpoints[0].y = -0.5*shape.height;
         shape.endpoints[1].x = 0.5*shape.width;
@@ -164,6 +196,13 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         shape.endpoints[2].y = 0.5*shape.height;
         shape.endpoints[3].x = -0.5*shape.width;
         shape.endpoints[3].y = 0.5*shape.height;
+
+        // edge endpoints (start, end) : 
+        // egde 0 (0, 1), edge 1 (1, 2), edge 2 (2, 3), edge 4 (3, 1)
+        shape.edgeNormals[0] = (Vector2){0, -1};
+        shape.edgeNormals[1] = (Vector2){1, 0};
+        shape.edgeNormals[2] = (Vector2){0, 1};
+        shape.edgeNormals[3] = (Vector2){-1, 0};
 
         Vector2 zeroVec = {0, 0};
         shape.collisionEndpointForces[0] = zeroVec;
@@ -177,16 +216,64 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         // создаем текстуры для тела
         SDL_Surface *surface = SDL_CreateRGBSurface(0, shape.width, shape.height, 32, 0, 0, 0, 0);
         SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
-        rigidBodyTextures[i] = SDL_CreateTextureFromSurface(renderer, surface);
+        *drawShapeTexture = SDL_CreateTextureFromSurface(renderer, surface);
         SDL_FreeSurface(surface);
         // текстура для центральной точки тела
         surface = SDL_CreateRGBSurface(0, BODY_CENTER_TEXTURE_SIZE, BODY_CENTER_TEXTURE_SIZE, 32, 0, 0, 0, 0);
         SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 0, 0));
-        bodyCentersTextures[i] = SDL_CreateTextureFromSurface(renderer, surface);
+        *drawShapeCenterTexture = SDL_CreateTextureFromSurface(renderer, surface);
         SDL_FreeSurface(surface);
+}
+
+
+
+void InitializeRigidBodies(SDL_Renderer *renderer) {
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        setupRigidBody(
+            &rigidBodies[i], 
+            (Vector2){rand() % (SCREEN_WIDTH - 50), rand() % (SCREEN_HEIGHT - 50)},
+            1, 
+            (rand() % 360) / 360.f * M_PI * 2,
+            (1 + rand() % 2 )* 100,
+            (1 + rand() % 2 )* 30,
+            (Vector2){100, -100},
+            10,
+            renderer,
+            &rigidBodyTextures[i],
+            &bodyCentersTextures[i]
+            );
     }
 }
 
+void InitializeTestRigidBodies(SDL_Renderer *renderer)
+{
+
+    setupRigidBody(
+        &rigidBodies[0],
+        (Vector2){0.5 * SCREEN_WIDTH, 0.5 * SCREEN_HEIGHT},
+        1,
+        0,
+        200,
+        50,
+        (Vector2){0, 0},
+        0,
+        renderer,
+        &rigidBodyTextures[0],
+        &bodyCentersTextures[0]);
+
+    setupRigidBody(
+        &rigidBodies[1],
+        (Vector2){0.2 * SCREEN_WIDTH, 0.1 * SCREEN_HEIGHT},
+        1,
+        0,
+        50,
+        20,
+        (Vector2){100, -100},
+        10,
+        renderer,
+        &rigidBodyTextures[1],
+        &bodyCentersTextures[1]);
+}
 
 SDL_Window *InitSDL() {
     SDL_Window *window = NULL;
@@ -244,16 +331,40 @@ void DrawRigidBodies(SDL_Renderer *renderer)
             NULL,
             SDL_FLIP_NONE
         );
-        Vector2 p1 = getShapeWorldCoords(rigidBody, 0);
-        Vector2 p2 = getShapeWorldCoords(rigidBody, 1);
-        Vector2 p3 = getShapeWorldCoords(rigidBody, 2);
-        Vector2 p4 = getShapeWorldCoords(rigidBody, 3);
-        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 1);
-        SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-        SDL_RenderDrawLine(renderer, p2.x, p2.y, p3.x, p3.y);
-        SDL_RenderDrawLine(renderer, p3.x, p3.y, p4.x, p4.y);
-        SDL_RenderDrawLine(renderer, p4.x, p4.y, p1.x, p1.y);
-        
+    
+        Vector2 worldEndpoints[4];
+        int j = 0;
+        for (j = 0; j < 4; ++j) {
+        worldEndpoints[j] = transformPointToWorldCoords(
+            rigidBody->shape.endpoints[j],
+            rigidBody->angle,
+            rigidBody->position);
+        }
+    
+    
+        for (j = 0; j < 4; ++j)
+        {   
+            int nextIdx = (j+1) % 4;
+            Vector2 p1 = worldEndpoints[j];
+            Vector2 p2 = worldEndpoints[nextIdx];
+            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 1);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            Vector2 n1 = rotateVector(
+                &(rigidBody->shape.edgeNormals[j]),
+                M_PI * rigidBody->angle / 180);
+            Vector2 n1Start = (Vector2){
+                0.5 * (p1.x + p2.x),
+                0.5 * (p1.y + p2.y)};
+            float normalLength = 20;
+            Vector2 n1End = (Vector2){
+                n1Start.x + normalLength * n1.x,
+                n1Start.y + normalLength * n1.y};
+            SDL_SetRenderDrawColor(renderer, 0, 255, 0, 1);
+            SDL_RenderDrawLine(
+                renderer, n1Start.x, n1Start.y, n1End.x, n1End.y
+            );
+        }
+
     }
 }
 
@@ -271,7 +382,11 @@ void DetectLineSegmentCollision(
 {
     int i;
     for (i=0; i<4; ++i) {
-        Vector2 bodyPointWorld = getShapeWorldCoords(rigidBody, i);
+        Vector2 bodyPointWorld = transformPointToWorldCoords(
+            rigidBody->shape.endpoints[i],
+            rigidBody->angle,
+            rigidBody->position
+        );
         Vector2 pointToLineV;
         float distance = pointToLineDistance(
             *lineStart, *lineEnd, bodyPointWorld, &pointToLineV
@@ -337,7 +452,7 @@ void DetectLineSegmentCollision(
         */
     }
 
-    printf("\n");
+   //  printf("\n");
 
 }
 
@@ -453,7 +568,8 @@ int main() {
     float currentTime = 0; 
     float dt = 1.0 / 60.0; 
 
-    InitializeRigidBodies(renderer);
+    // InitializeRigidBodies(renderer);
+    InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
