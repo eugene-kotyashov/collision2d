@@ -275,7 +275,7 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         40,
         50,
         20,
-        (Vector2){20, -20},
+        (Vector2){50, -50},
         0,
         renderer,
         &rigidBodyTextures[1],
@@ -393,6 +393,70 @@ void CloseSDL(SDL_Window *window) {
     SDL_Quit();
 }
 
+int IfPointInsideBody(
+    Vector2 pointWorld,
+    RigidBody* body,
+    Vector2* closestNormalWorld,
+    int* closestEdgeId
+) {
+
+    int edgeId = 0;
+    float minPenetrationDepth = INFINITY;
+    for (edgeId=0; edgeId<4; ++edgeId) {
+        int fistVertexId = edgeId;
+        int secondVertexId = (edgeId+1) % 4;
+        Vector2 edgeNormal = body->shape.edgeNormals[edgeId];
+        edgeNormal = rotateVector(&edgeNormal, body->angle);
+        Vector2 edgeFirstVertex = body->shape.endpoints[fistVertexId];
+        edgeFirstVertex = transformPointToWorldCoords(
+            edgeFirstVertex, body->angle, body->position
+        );
+        Vector2 edgeSecondVertex = body->shape.endpoints[secondVertexId];
+        edgeSecondVertex = transformPointToWorldCoords(
+            edgeSecondVertex, body->angle, body->position
+        );
+
+        Vector2 pointToLineV;
+        // poit penetrartion deth
+        float penetrationDepth = pointToLineDistance(
+            edgeFirstVertex, edgeSecondVertex, pointWorld, &pointToLineV
+        );
+        float pointLineNormalDot = dotProduct(
+            &pointToLineV, &edgeNormal
+        );
+
+        if (pointLineNormalDot <= 0) {
+            // this means point is outside a body
+            return 0;
+        }
+        
+        if (pointLineNormalDot > 0) {
+            if (penetrationDepth < minPenetrationDepth) {
+                minPenetrationDepth = penetrationDepth;
+                *closestEdgeId = edgeId;
+                *closestNormalWorld = edgeNormal;
+            }
+        }
+
+    }
+
+    return 1;
+}
+
+void reflectBodyLinearVelocity(
+    RigidBody *rigidBody,
+    Vector2 *outerNormal)
+{
+    float velProj = fabs(dotProduct(
+        &(rigidBody->linearVelocity),
+        outerNormal));
+
+    rigidBody->linearVelocity.x =
+        2.0 * velProj * outerNormal->x + rigidBody->linearVelocity.x;
+    rigidBody->linearVelocity.y =
+        2.0 * velProj * outerNormal->y + rigidBody->linearVelocity.y;
+}
+
 int DetectLineSegmentCollision(
     Vector2 *lineStart,
     Vector2 *lineEnd,
@@ -463,14 +527,7 @@ int DetectLineSegmentCollision(
         // if ((previousCollisionStatus == 0) && (rigidBody->shape.collisionStatus[i] == 1) )
         // {
         // rigidBody->angularVelocity = -rigidBody->angularVelocity;
-        float velProj = fabs(dotProduct(
-            &rigidBody->linearVelocity,
-            outerNormal));
-
-        rigidBody->linearVelocity.x =
-            2.0 * velProj * outerNormal->x + rigidBody->linearVelocity.x;
-        rigidBody->linearVelocity.y =
-            2.0 * velProj * outerNormal->y + rigidBody->linearVelocity.y;
+        reflectBodyLinearVelocity(rigidBody, outerNormal);
 
         // }
     }
@@ -547,42 +604,23 @@ void DetectBodyToBodyCollisions(RigidBody* rigidBodies) {
     RigidBody* body1 = &rigidBodies[1];
     RigidBody* body2 = &rigidBodies[0];
 
-    // check collision of every vertex of body 2 with all edges of body 1
-    int edgeId = 0;
-    for (edgeId=0; edgeId<4; ++edgeId) {
-        int fistVertexId = edgeId;
-        int secondVertexId = (edgeId+1) % 4;
-        Vector2 edgeNormal = body2->shape.edgeNormals[edgeId];
-        edgeNormal = rotateVector(&edgeNormal, body2->angle);
-        Vector2 edgeFirstVertex = body2->shape.endpoints[fistVertexId];
-        edgeFirstVertex = transformPointToWorldCoords(
-            edgeFirstVertex, body2->angle, body2->position
-        );
-        Vector2 edgeSecondVertex = body2->shape.endpoints[secondVertexId];
-        edgeSecondVertex = transformPointToWorldCoords(
-            edgeSecondVertex, body2->angle, body2->position
-        );
+    // body1 is bumped (reflected) from body2
+    int ptId = 0;
+    for(ptId =0; ptId < 4; ++ptId) {
 
-        int collisionCount = DetectLineSegmentCollision(
-            &edgeFirstVertex,
-            &edgeSecondVertex,
-            &edgeNormal,
-            body1
+        Vector2 currPoint = body1->shape.endpoints[ptId];
+        currPoint = transformPointToWorldCoords(
+            currPoint, body1->angle, body1->position
         );
-
-        /*
-        if (collisionCount > 0) {
-            printf(
-                "body to body collision! (%.2e %2.e)\n",
-                body1->linearVelocity.x, body1->linearVelocity.y
-            );
-        } else {
-            printf(
-                "body to body no collision! (%.2e %2.e)\n",
-                body1->linearVelocity.x, body1->linearVelocity.y
-            );
+        Vector2 closestNormalWorld = {0, 0};
+        int closestEdgeId = -1;
+        int testResutl = IfPointInsideBody(
+            currPoint, body2, &closestNormalWorld, &closestEdgeId
+        );
+        if (testResutl == 1) {
+            reflectBodyLinearVelocity(body1, &closestNormalWorld);
+            break;
         }
-        */
     }
 }
 
@@ -627,9 +665,9 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
         // DetectCollision(&rigidBodies[i]);
         DetectCollisionWithScreenBorder(&rigidBodies[i]);
     }
-/*
+
     DetectBodyToBodyCollisions(rigidBodies);
-*/
+
 }
 
 int main() {
