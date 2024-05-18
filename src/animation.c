@@ -252,7 +252,7 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
             (1 + rand() % 2 )* 100,
             (1 + rand() % 2 )* 30,
             (Vector2){30, -30},
-            10,
+            14,
             renderer,
             &rigidBodyTextures[i],
             &bodyCentersTextures[i]
@@ -671,27 +671,7 @@ void DetectCollision(RigidBody *rigidBody) {
     }
 }
 
-void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
-{
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
-    {
-        RigidBody *rigidBody = &rigidBodies[i];
-        ComputeForceAndTorque(rigidBody);
-        // ПОменять метод Эйлера на метод средней точки
-        Vector2 linearAcceleration = (Vector2){
-            rigidBody->force.x / rigidBody->shape.mass,
-             rigidBody->force.y / rigidBody->shape.mass
-        };
-        rigidBody->linearVelocity.x += linearAcceleration.x * dt;
-        rigidBody->linearVelocity.y += linearAcceleration.y * dt;
-        rigidBody->position.x += rigidBody->linearVelocity.x * dt;
-        rigidBody->position.y += rigidBody->linearVelocity.y * dt;
-        float angularAcceleration = 
-            rigidBody->torque / rigidBody->shape.momentOfInertia;
-        rigidBody->angularVelocity += angularAcceleration * dt;
-        rigidBody->angle += rigidBody->angularVelocity * dt;
-    }
-    // проверка соударений
+void DetectColsAndUpdateForces(RigidBody* rigidBodies) {
 
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         resetCollisionForces(&rigidBodies[i]);
@@ -715,6 +695,92 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
             }
         }
     }
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        ComputeForceAndTorque(&rigidBodies[i]);
+    }
+
+}
+
+void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
+{
+    Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
+    Vector2 stepBeginPositions[NUM_RIGID_BODIES];
+    float stepBeginAngles[NUM_RIGID_BODIES];
+    float stepBeginAngularVel[NUM_RIGID_BODIES];
+
+    Vector2 halfStepAccel[NUM_RIGID_BODIES];
+    float halfStepAngAccel[NUM_RIGID_BODIES];
+    float halfStepAngularVel[NUM_RIGID_BODIES];
+    Vector2 halfStepVelocities[NUM_RIGID_BODIES];
+    // save step start parameters to use later 
+    // for midstep calculation
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        RigidBody *rigidBody = &rigidBodies[i];
+        stepBeginPositions[i] = rigidBody->position;
+        stepBeginVelocities[i] = rigidBody->linearVelocity;
+        stepBeginAngles[i] = rigidBodies->angle;
+        stepBeginAngularVel[i] = rigidBodies->angularVelocity;
+    }
+    // do half step calculations
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+        RigidBody *rigidBody = &rigidBodies[i];
+        
+        Vector2 linearAcceleration = (Vector2){
+            rigidBody->force.x / rigidBody->shape.mass,
+             rigidBody->force.y / rigidBody->shape.mass
+        };
+        rigidBody->linearVelocity.x += linearAcceleration.x * 0.5*dt;
+        rigidBody->linearVelocity.y += linearAcceleration.y * 0.5*dt;
+        rigidBody->position.x += rigidBody->linearVelocity.x * 0.5*dt;
+        rigidBody->position.y += rigidBody->linearVelocity.y * 0.5*dt;
+        float angularAcceleration = 
+            rigidBody->torque / rigidBody->shape.momentOfInertia;
+        rigidBody->angularVelocity += angularAcceleration * 0.5*dt;
+        rigidBody->angle += rigidBody->angularVelocity * 0.5*dt;
+    }
+    // проверка соударений
+    // вычисление сил и моментов сил и скоростей
+    DetectColsAndUpdateForces(rigidBodies);
+    // init halfstep accelerations and velocities
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        halfStepAccel[i].x = rigidBodies[i].force.x/rigidBodies[i].shape.mass;
+        halfStepAccel[i].y = rigidBodies[i].force.y/rigidBodies[i].shape.mass;
+
+        halfStepAngAccel[i] = 
+            rigidBodies[i].torque/rigidBodies[i].shape.momentOfInertia;
+        halfStepVelocities[i] = rigidBodies[i].linearVelocity;
+        halfStepAngularVel[i] = rigidBodies[i].angularVelocity;
+    }
+    
+    // do fullstep now
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+        RigidBody *rigidBody = &rigidBodies[i];
+       
+        rigidBody->linearVelocity.x = 
+            stepBeginVelocities[i].x + halfStepAccel[i].x * dt;
+        rigidBody->linearVelocity.y =
+             stepBeginVelocities[i].y + halfStepAccel[i].y * dt;
+
+        rigidBody->position.x = 
+            stepBeginPositions[i].x + halfStepVelocities[i].x * dt;
+        rigidBody->position.y = 
+            stepBeginPositions[i].y + halfStepVelocities[i].y * dt;
+
+        rigidBody->angularVelocity = stepBeginAngularVel[i] + halfStepAngAccel[i] * dt;
+        rigidBody->angle = stepBeginAngles[i] + halfStepAngularVel[i] * dt;
+    }
+    // проверка соударений
+    // вычисление сил и моментов сил и скоростей
+    DetectColsAndUpdateForces(rigidBodies);
+/*
+    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
+        printf(" %i %.4e", i, rigidBodies[i].angle);
+    }
+*/
+    printf("\n");
+    
 }
 
 int main() {
