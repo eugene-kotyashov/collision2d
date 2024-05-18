@@ -730,15 +730,23 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
             rigidBody->force.x / rigidBody->shape.mass,
              rigidBody->force.y / rigidBody->shape.mass
         };
-        rigidBody->linearVelocity.x += linearAcceleration.x * 0.5*dt;
-        rigidBody->linearVelocity.y += linearAcceleration.y * 0.5*dt;
-        rigidBody->position.x += rigidBody->linearVelocity.x * 0.5*dt;
-        rigidBody->position.y += rigidBody->linearVelocity.y * 0.5*dt;
+        rigidBody->linearVelocity.x += linearAcceleration.x*0.5*dt;
+        rigidBody->linearVelocity.y += linearAcceleration.y*0.5*dt;
+        rigidBody->position.x += rigidBody->linearVelocity.x*0.5*dt;
+        rigidBody->position.y += rigidBody->linearVelocity.y*0.5*dt;
         float angularAcceleration = 
             rigidBody->torque / rigidBody->shape.momentOfInertia;
-        rigidBody->angularVelocity += angularAcceleration * 0.5*dt;
-        rigidBody->angle += rigidBody->angularVelocity * 0.5*dt;
+        rigidBody->angularVelocity += angularAcceleration*0.5*dt;
+        rigidBody->angle += rigidBody->angularVelocity*0.5*dt;
+
+         printf(" %i accel %.4e avel %.4e ang %.4e\n",
+             i, angularAcceleration,
+              rigidBody->angularVelocity,
+              rigidBody->angle );
     }
+    
+    
+
     // проверка соударений
     // вычисление сил и моментов сил и скоростей
     DetectColsAndUpdateForces(rigidBodies);
