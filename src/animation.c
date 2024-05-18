@@ -676,7 +676,6 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
     for (int i = 0; i < NUM_RIGID_BODIES; ++i)
     {
         RigidBody *rigidBody = &rigidBodies[i];
-        ComputeForceAndTorque(rigidBody);
         // ПОменять метод Эйлера на метод средней точки
         Vector2 linearAcceleration = (Vector2){
             rigidBody->force.x / rigidBody->shape.mass,
@@ -715,6 +714,14 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
             }
         }
     }
+    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
+        ComputeForceAndTorque(&rigidBodies[i]);
+    }
+
+    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
+        printf(" %i %.4e", i, rigidBodies[i].angle);
+    }
+    printf("\n");
 }
 
 int main() {
