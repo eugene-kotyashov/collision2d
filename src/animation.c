@@ -472,7 +472,8 @@ void reflectBodyLinearVelocity(
 // update forces when edge point from body1
 // penetrates body2
 void updateCollisionForces(
-    RigidBody* body1, 
+    RigidBody* body1,
+    // can be NULL so we use it as a collision with screen border 
     RigidBody* body2,
     Vector2 b1PointWorld,
     Vector2 b2ClosestNormalWorld,
@@ -494,7 +495,7 @@ void updateCollisionForces(
         body1->collisionForces[body1->collisionCount] = body1ColForce;
         ++(body1->collisionCount);
     }
-
+    if (body2 == NULL) return;
     if (body2->collisionCount < MAX_COLLISIONS_PER_BODY - 1) {
         // add the same force as for 1st body but with opposite sign
         body2->collisionForces[body2->collisionCount] = body1ColForce;
@@ -504,6 +505,7 @@ void updateCollisionForces(
     }
 }
 
+// 0 - means no collision
 int DetectLineSegmentCollision(
     Vector2 *lineStart,
     Vector2 *lineEnd,
@@ -515,6 +517,7 @@ int DetectLineSegmentCollision(
     int collisionCount = 0;
     int maxPenetrationDepthInx = -1;
     float maxPenetrationDepth = -INFINITY;
+    Vector2 collisionPointWorld = {0, 0};
     for (i=0; i<4; ++i) {
 
         Vector2 bodyPointWorld = transformPointToWorldCoords(
@@ -537,58 +540,30 @@ int DetectLineSegmentCollision(
              outerNormal->x, outerNormal->y
         );
         */
-        int previousCollisionStatus = rigidBody->shape.collisionStatus[i];
         if (pointLineNormalDot > 0)
         {
-
             if (penetrationDepth > maxPenetrationDepth)
             {
                 // select the point with max penetration
                 maxPenetrationDepth = penetrationDepth;
+                collisionPointWorld = bodyPointWorld;
                 maxPenetrationDepthInx = i;
             }
-            rigidBody->shape.collisionStatus[i] = 1;
-            ++collisionCount;
         }
-        else
-        {
-            // clear collision status
-            rigidBody->shape.collisionStatus[i] = 0;
-            
-        }
-       
     }
 
     if (maxPenetrationDepthInx > -1)
     {
-        // TODO: adding collision force
-        /*
-        rigidBody->shape.collisionEndpointForces[i].x =
-            COLLISION_FORCE_VALUE * outerNormal->x;
-        rigidBody->shape.collisionEndpointForces[i].y =
-            COLLISION_FORCE_VALUE * outerNormal->y;
-        */
-
-        // simply reflect linear velocity with respect to egde normal
-        // this has to be done only on enter colision (col status change from 0 to 1)
-        // if ((previousCollisionStatus == 0) && (rigidBody->shape.collisionStatus[i] == 1) )
-        // {
-        // rigidBody->angularVelocity = -rigidBody->angularVelocity;
-        reflectBodyLinearVelocity(rigidBody, outerNormal);
-
-        // }
+        updateCollisionForces(
+            rigidBody, NULL,
+            collisionPointWorld, *outerNormal, -1,
+            maxPenetrationDepth
+        );
+        return 1;
+        // reflectBodyLinearVelocity(rigidBody, outerNormal);
     }
 
-   //  printf("\n");
-    //if (collisionCount > 0)
-    //{
-        // printf("collision status %d %d %d %d\n",
-        //        rigidBody->shape.collisionStatus[0],
-        //        rigidBody->shape.collisionStatus[1],
-        //        rigidBody->shape.collisionStatus[2],
-        //        rigidBody->shape.collisionStatus[3]);
-    // }
-   return collisionCount;
+   return 0;
 
 }
 
@@ -712,27 +687,28 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
         rigidBody->linearVelocity.y += linearAcceleration.y * dt;
         rigidBody->position.x += rigidBody->linearVelocity.x * dt;
         rigidBody->position.y += rigidBody->linearVelocity.y * dt;
-        float angularAcceleration = rigidBody->torque / rigidBody->shape.momentOfInertia;
+        float angularAcceleration = 
+            rigidBody->torque / rigidBody->shape.momentOfInertia;
         rigidBody->angularVelocity += angularAcceleration * dt;
         rigidBody->angle += rigidBody->angularVelocity * dt;
     }
     // проверка соударений
+
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        resetCollisionForces(&rigidBodies[i]);
+    }
     
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        // DetectCollision(&rigidBodies[i]);
+        
         DetectCollisionWithScreenBorder(&rigidBodies[i]);
     }
-    resetCollisionForces(&rigidBodies[0]);
-    resetCollisionForces(&rigidBodies[1]);
+
     DetectBodyToBodyCollisions(
         &rigidBodies[1], &rigidBodies[0]
     );
     DetectBodyToBodyCollisions(
         &rigidBodies[0], &rigidBodies[1]
     );
-    printf("body1 col  %d, body2 col  %d\n",
-        rigidBodies[0].collisionCount,
-        rigidBodies[1].collisionCount);
     
 }
 
@@ -749,7 +725,7 @@ int main() {
 
     float totalSimulationTime = 10000; 
     float currentTime = 0; 
-    float dt = 1.0 / 240.0; 
+    float dt = 1.0 / 60.0; 
 
     // InitializeRigidBodies(renderer);
     InitializeTestRigidBodies(renderer);
