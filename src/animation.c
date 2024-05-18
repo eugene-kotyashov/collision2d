@@ -7,7 +7,7 @@
 #endif
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 2
+#define NUM_RIGID_BODIES 5
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
 #define COLLISION_FORCE_K 1000.0
@@ -33,8 +33,7 @@ typedef struct {
     float momentOfInertia;
     Vector2 endpoints[4];
     Vector2 edgeNormals[4];
-    // 0 if no collision 1 - if collision is happening
-    int collisionStatus[4];
+
 } BoxShape;
 
 
@@ -620,7 +619,7 @@ void DetectCollisionWithScreenBorder(RigidBody *rigidBody) {
         rigidBody
     );
 }
-
+// if there is a collision returns 1, 0 otherwise
 int DetectBodyToBodyCollisions(
     RigidBody* body1,
     RigidBody* body2 
@@ -703,13 +702,19 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
         DetectCollisionWithScreenBorder(&rigidBodies[i]);
     }
 
-    DetectBodyToBodyCollisions(
-        &rigidBodies[1], &rigidBodies[0]
-    );
-    DetectBodyToBodyCollisions(
-        &rigidBodies[0], &rigidBodies[1]
-    );
-    
+    for (int firstId = 0; firstId < NUM_RIGID_BODIES; ++firstId)
+    {
+        for (int secId = 0; secId < NUM_RIGID_BODIES; ++secId)
+        {
+            if (firstId == secId) continue;
+            if (DetectBodyToBodyCollisions(
+                    &rigidBodies[firstId], &rigidBodies[secId]) == 0)
+            {
+                DetectBodyToBodyCollisions(
+                    &rigidBodies[secId], &rigidBodies[firstId]);
+            }
+        }
+    }
 }
 
 int main() {
@@ -727,8 +732,8 @@ int main() {
     float currentTime = 0; 
     float dt = 1.0 / 60.0; 
 
-    // InitializeRigidBodies(renderer);
-    InitializeTestRigidBodies(renderer);
+    InitializeRigidBodies(renderer);
+    // InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
