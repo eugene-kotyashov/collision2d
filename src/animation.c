@@ -248,15 +248,16 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
             &rigidBodies[i], 
             (Vector2){rand() % (SCREEN_WIDTH - 50), rand() % (SCREEN_HEIGHT - 50)},
             1, 
-            (rand() % 360) / 360.f * M_PI * 2,
+            10*(((float)rand() / RAND_MAX)*2 - 1),
             (1 + rand() % 2 )* 100,
             (1 + rand() % 2 )* 30,
             (Vector2){30, -30},
-            14,
+            15*(((float)rand() / RAND_MAX)*2 - 1),
             renderer,
             &rigidBodyTextures[i],
             &bodyCentersTextures[i]
             );
+        printf("%d %.2e\n", i, rigidBodies[i].angularVelocity);
     }
 }
 
@@ -701,7 +702,61 @@ void DetectColsAndUpdateForces(RigidBody* rigidBodies) {
 
 }
 
-void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
+void RunRigidBodySimulationEuler(SDL_Renderer *renderer, float dt)
+{
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+        RigidBody *rigidBody = &rigidBodies[i];
+        // ПОменять метод Эйлера на метод средней точки
+        Vector2 linearAcceleration = (Vector2){
+            rigidBody->force.x / rigidBody->shape.mass,
+             rigidBody->force.y / rigidBody->shape.mass
+        };
+        rigidBody->linearVelocity.x += linearAcceleration.x * dt;
+        rigidBody->linearVelocity.y += linearAcceleration.y * dt;
+        rigidBody->position.x += rigidBody->linearVelocity.x * dt;
+        rigidBody->position.y += rigidBody->linearVelocity.y * dt;
+        float angularAcceleration = 
+            rigidBody->torque / rigidBody->shape.momentOfInertia;
+        rigidBody->angularVelocity += angularAcceleration * dt;
+        rigidBody->angle += rigidBody->angularVelocity * dt;
+    }
+    // проверка соударений
+
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        resetCollisionForces(&rigidBodies[i]);
+    }
+    
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        
+        DetectCollisionWithScreenBorder(&rigidBodies[i]);
+    }
+
+    for (int firstId = 0; firstId < NUM_RIGID_BODIES; ++firstId)
+    {
+        for (int secId = 0; secId < NUM_RIGID_BODIES; ++secId)
+        {
+            if (firstId == secId) continue;
+            if (DetectBodyToBodyCollisions(
+                    &rigidBodies[firstId], &rigidBodies[secId]) == 0)
+            {
+                DetectBodyToBodyCollisions(
+                    &rigidBodies[secId], &rigidBodies[firstId]);
+            }
+        }
+    }
+    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
+        ComputeForceAndTorque(&rigidBodies[i]);
+    }
+/*
+    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
+        printf(" %i %.4e", i, rigidBodies[i].angle);
+    }
+    printf("\n");
+*/
+}
+
+void RunRigidBodySimulationMidpoint(SDL_Renderer *renderer, float dt)
 {
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
     Vector2 stepBeginPositions[NUM_RIGID_BODIES];
@@ -738,11 +793,12 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
             rigidBody->torque / rigidBody->shape.momentOfInertia;
         rigidBody->angularVelocity += angularAcceleration*0.5*dt;
         rigidBody->angle += rigidBody->angularVelocity*0.5*dt;
-
+        /*
          printf(" %i accel %.4e avel %.4e ang %.4e\n",
              i, angularAcceleration,
               rigidBody->angularVelocity,
               rigidBody->angle );
+        */
     }
     
     
@@ -782,11 +838,10 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
     // проверка соударений
     // вычисление сил и моментов сил и скоростей
     DetectColsAndUpdateForces(rigidBodies);
-/*
+
     for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
         printf(" %i %.4e", i, rigidBodies[i].angle);
     }
-*/
     printf("\n");
     
 }
@@ -815,7 +870,8 @@ int main() {
     {
         if (currentTime < totalSimulationTime)
         {
-            RunRigidBodySimulation(renderer, dt);
+            // RunRigidBodySimulationMidpoint(renderer, dt);
+            RunRigidBodySimulationEuler(renderer, dt);
             currentTime += dt;
             SDL_Delay(dt * 1000); // конвертируем
         }
