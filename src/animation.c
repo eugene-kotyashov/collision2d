@@ -10,7 +10,7 @@
 #define NUM_RIGID_BODIES 2
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
-#define COLLISION_FORCE_K 100.0f
+#define COLLISION_FORCE_K 1000.0
 
 //тело должно получить момент импульса при оталкивании
 //добавить стокновения 
@@ -263,7 +263,7 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
 
 void InitializeTestRigidBodies(SDL_Renderer *renderer)
 {
-
+    // big body
     setupRigidBody(
         &rigidBodies[0],
         (Vector2){0.5 * SCREEN_WIDTH, 0.5 * SCREEN_HEIGHT},
@@ -277,13 +277,14 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         &rigidBodyTextures[0],
         &bodyCentersTextures[0]);
 
+    // smaller body
     setupRigidBody(
         &rigidBodies[1],
         (Vector2){0.2 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
         1,
         40,
-        50,
-        20,
+        100,
+        40,
         (Vector2){100, -100},
         10,
         renderer,
@@ -379,21 +380,22 @@ void DrawRigidBodies(SDL_Renderer *renderer)
             SDL_RenderDrawLine(
                 renderer, n1Start.x, n1Start.y, n1End.x, n1End.y
             );
-            // draw collision points
-            if ((rigidBody->shape.collisionStatus[j]) == 1) {
-                SDL_SetRenderDrawColor(renderer, 0, 255, 0, 1);
-                int rectSize = 10;
-                SDL_Rect collisionPoint = {
-                    (int)(worldEndpoints[j].x-0.5*rectSize),
-                    (int)(worldEndpoints[j].y-0.5*rectSize),
-                    rectSize,
-                    rectSize
-                };
-                SDL_RenderFillRect(renderer, &collisionPoint);
-
-            }
+            
         }
 
+        // draw collision forces
+
+        for (j = 0; j < rigidBody->collisionCount; ++j)
+        {
+            SDL_SetRenderDrawColor(renderer, 0, 255, 0, 1);
+            int rectSize = 10;
+            SDL_Rect collisionPoint = {
+                (int)(rigidBody->collisionForces[j].applicationPoint.x - 0.5 * rectSize),
+                (int)(rigidBody->collisionForces[j].applicationPoint.y - 0.5 * rectSize),
+                rectSize,
+                rectSize};
+            SDL_RenderFillRect(renderer, &collisionPoint);
+        }
     }
 }
 
@@ -416,7 +418,7 @@ int IfPointInsideBody(
         int fistVertexId = edgeId;
         int secondVertexId = (edgeId+1) % 4;
         Vector2 edgeNormal = body->shape.edgeNormals[edgeId];
-        edgeNormal = rotateVector(&edgeNormal, body->angle);
+        edgeNormal = rotateVector(&edgeNormal, M_PI*body->angle/180.0);
         Vector2 edgeFirstVertex = body->shape.endpoints[fistVertexId];
         edgeFirstVertex = transformPointToWorldCoords(
             edgeFirstVertex, body->angle, body->position
@@ -702,7 +704,10 @@ void RunRigidBodySimulation(SDL_Renderer *renderer, float dt)
         RigidBody *rigidBody = &rigidBodies[i];
         ComputeForceAndTorque(rigidBody);
         // ПОменять метод Эйлера на метод средней точки
-        Vector2 linearAcceleration = (Vector2){rigidBody->force.x / rigidBody->shape.mass, rigidBody->force.y / rigidBody->shape.mass};
+        Vector2 linearAcceleration = (Vector2){
+            rigidBody->force.x / rigidBody->shape.mass,
+             rigidBody->force.y / rigidBody->shape.mass
+        };
         rigidBody->linearVelocity.x += linearAcceleration.x * dt;
         rigidBody->linearVelocity.y += linearAcceleration.y * dt;
         rigidBody->position.x += rigidBody->linearVelocity.x * dt;
@@ -744,7 +749,7 @@ int main() {
 
     float totalSimulationTime = 10000; 
     float currentTime = 0; 
-    float dt = 1.0 / 600.0; 
+    float dt = 1.0 / 240.0; 
 
     // InitializeRigidBodies(renderer);
     InitializeTestRigidBodies(renderer);
