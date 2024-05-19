@@ -756,6 +756,17 @@ void RunRigidBodySimulationEuler(SDL_Renderer *renderer, float dt)
 */
 }
 
+void printAngleStuff() {
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+        printf(" %i angcel %.4e avel %.4e ang %.4e\n",
+               i,
+               rigidBodies[i].torque / rigidBodies[i].shape.momentOfInertia,
+               rigidBodies[i].angularVelocity,
+               rigidBodies[i].angle);
+    }
+}
+
 void RunRigidBodySimulationMidpoint(SDL_Renderer *renderer, float dt)
 {
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
@@ -773,9 +784,10 @@ void RunRigidBodySimulationMidpoint(SDL_Renderer *renderer, float dt)
         RigidBody *rigidBody = &rigidBodies[i];
         stepBeginPositions[i] = rigidBody->position;
         stepBeginVelocities[i] = rigidBody->linearVelocity;
-        stepBeginAngles[i] = rigidBodies->angle;
-        stepBeginAngularVel[i] = rigidBodies->angularVelocity;
+        stepBeginAngles[i] = rigidBody->angle;
+        stepBeginAngularVel[i] = rigidBody->angularVelocity;
     }
+    
     // do half step calculations
     for (int i = 0; i < NUM_RIGID_BODIES; ++i)
     {
@@ -800,9 +812,6 @@ void RunRigidBodySimulationMidpoint(SDL_Renderer *renderer, float dt)
               rigidBody->angle );
         */
     }
-    
-    
-
     // проверка соударений
     // вычисление сил и моментов сил и скоростей
     DetectColsAndUpdateForces(rigidBodies);
@@ -816,7 +825,6 @@ void RunRigidBodySimulationMidpoint(SDL_Renderer *renderer, float dt)
         halfStepVelocities[i] = rigidBodies[i].linearVelocity;
         halfStepAngularVel[i] = rigidBodies[i].angularVelocity;
     }
-    
     // do fullstep now
     for (int i = 0; i < NUM_RIGID_BODIES; ++i)
     {
@@ -838,11 +846,6 @@ void RunRigidBodySimulationMidpoint(SDL_Renderer *renderer, float dt)
     // проверка соударений
     // вычисление сил и моментов сил и скоростей
     DetectColsAndUpdateForces(rigidBodies);
-
-    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
-        printf(" %i %.4e", i, rigidBodies[i].angle);
-    }
-    printf("\n");
     
 }
 
@@ -870,8 +873,8 @@ int main() {
     {
         if (currentTime < totalSimulationTime)
         {
-            // RunRigidBodySimulationMidpoint(renderer, dt);
-            RunRigidBodySimulationEuler(renderer, dt);
+            RunRigidBodySimulationMidpoint(renderer, dt);
+            // RunRigidBodySimulationEuler(renderer, dt);
             currentTime += dt;
             SDL_Delay(dt * 1000); // конвертируем
         }
