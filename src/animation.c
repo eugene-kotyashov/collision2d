@@ -22,6 +22,12 @@ typedef struct {
 } Vector2;
 
 typedef struct {
+    float x;
+    float y; 
+    float z;
+} Vector3;
+
+typedef struct {
     Vector2 force;
     Vector2 applicationPoint;
 } CollisionForce;
@@ -56,6 +62,15 @@ RigidBody rigidBodies[NUM_RIGID_BODIES];
 
 float dotProduct(Vector2* v1, Vector2* v2) {
     return v1->x*v2->x + v1->y*v2->y;
+}
+
+Vector3 crossProduct(Vector3 v, Vector3 w) {
+
+    return (Vector3){
+        w.y*v.z - w.z*v.y,
+        w.z*v.x - w.x*v.z,
+        w.x*v.y - w.y*v.x
+    };
 }
 
 float length(Vector2* v) {
@@ -467,6 +482,126 @@ void reflectBodyLinearVelocity(
         2.0 * velProj * outerNormal->x + rigidBody->linearVelocity.x;
     rigidBody->linearVelocity.y =
         2.0 * velProj * outerNormal->y + rigidBody->linearVelocity.y;
+}
+
+Vector2 bodyPointWorlddVelociry(
+    RigidBody* body,
+    Vector2 bodyPointWorld
+) {
+    return (Vector2){
+        body->linearVelocity.x - 
+            body->angularVelocity*(bodyPointWorld.y-body->position.y),
+        body->linearVelocity.y +
+            body->angularVelocity*(bodyPointWorld.x - body->position.x)
+    };
+}
+
+float vrelNormlalProjection(
+    RigidBody* body1,
+    RigidBody* body2,
+    Vector2 b1PointWorld,
+    Vector2 b2ClosestNormalWorld
+) {
+    Vector2 v1 = bodyPointWorlddVelociry(body1, b1PointWorld);
+    Vector2 v2 = bodyPointWorlddVelociry(body2, b1PointWorld);
+    Vector2 vrel = { v1.x - v2.x, v1.y - v2.y};
+    // relative velocity in b2ClosestNormalWorld direction
+    float vRelative = dotProduct(
+        &b2ClosestNormalWorld, &vrel);
+    return vRelative;
+}
+
+float calculateCollisionImpulseForce(
+    float eps,
+    RigidBody* body1,
+    // can be NULL so we use it as a collision with screen border 
+    RigidBody* body2,
+    Vector2 b1PointWorld,
+    Vector2 b2ClosestNormalWorld
+) {
+
+    float vrel = vrelNormlalProjection(
+        body1, body2, b1PointWorld, b2ClosestNormalWorld
+    );
+    float numerator = -(1 + eps)*vrel;
+    float term1 = 1/ body1->shape.mass;
+    float term2 = 1/ body2->shape.mass;
+    // vector from body1 center of mass to collision point
+    Vector2 rb1 = { 
+        b1PointWorld.x - body1->position.x, 
+        b1PointWorld.y - body1->position.y
+    };
+    // the same for body2
+    Vector2 rb2 = { 
+        b1PointWorld.x - body2->position.x, 
+        b1PointWorld.y - body2->position.y
+    };
+// first body related tmp vector
+    Vector3 v1tmp = crossProduct(
+        (Vector3){rb1.x, rb1.y, 0.0},
+        (Vector3){b2ClosestNormalWorld.x, b2ClosestNormalWorld.y, 0.0}
+    ); 
+    float invIntertiaB1 = 1/body1->shape.momentOfInertia;
+    v1tmp = (Vector3){
+        invIntertiaB1 * v1tmp.x,
+        invIntertiaB1 * v1tmp.y,
+        invIntertiaB1 * v1tmp.z
+    };
+    v1tmp = crossProduct(
+        v1tmp,
+        (Vector3) {rb1.x, rb1.y, 0.0}
+    );
+// second body
+    Vector3 v2tmp = crossProduct(
+        (Vector3){rb2.x, rb2.y, 0.0},
+        (Vector3){b2ClosestNormalWorld.x, b2ClosestNormalWorld.y, 0.0}
+    ); 
+    float invIntertiaB2 = 1/body2->shape.momentOfInertia;
+    v2tmp = (Vector3){
+        invIntertiaB2 * v2tmp.x,
+        invIntertiaB2 * v2tmp.y,
+        invIntertiaB2 * v2tmp.z
+    };
+    v2tmp = crossProduct(
+        v2tmp,
+        (Vector3) {rb2.x, rb2.y, 0.0}
+    );
+    float term3 = dotProduct(
+        &b2ClosestNormalWorld,
+        &((Vector2){v1tmp.x, v1tmp.y})
+    );
+
+    float term4 = dotProduct(
+        &b2ClosestNormalWorld,
+        &((Vector2){v2tmp.x, v2tmp.y})
+    );
+    float j = numerator / (term1 + term2 + term3 + term4);
+    return j;
+}
+
+
+void updateCollisionForcesViaImpulse(
+    RigidBody* body1,
+    // can be NULL so we use it as a collision with screen border 
+    RigidBody* body2,
+    Vector2 b1PointWorld,
+    Vector2 b2ClosestNormalWorld,
+    int b2ClosestEdgeId,
+    float b2PenetrationDepth
+) {
+    float THRESHOLD = 0;
+    // speed of collision point (linear + rotation) of 1st body
+    Vector2 v1 = bodyPointWorlddVelociry(body1, b1PointWorld);
+    Vector2 v2 = bodyPointWorlddVelociry(body2, b1PointWorld);
+    Vector2 vrel = { v1.x - v2.x, v1.y - v2.y};
+    // relative velocity in b2ClosestNormalWorld direction
+    float vRelative = dotProduct(
+        &b2ClosestNormalWorld, &vrel);
+
+    // apply impulse only 
+    if (vRelative < -THRESHOLD) {
+        // TODO: add collision force based on impusle here
+    }
 }
 
 // update forces when edge point from body1
