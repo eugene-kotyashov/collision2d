@@ -8,6 +8,7 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
 #define NUM_RIGID_BODIES 6
+#define MAX_CONTACT_POINTS NUM_RIGID_BODIES*5 
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
 #define COLLISION_FORCE_K 1000.0
@@ -59,11 +60,39 @@ typedef struct {
     // заданы в мировой системе координат
     CollisionForce collisionForces[MAX_COLLISIONS_PER_BODY];
     int collisionCount;
+    Vector2 collisionMomentumPulse;
+    float collisionAngleMomentumPulse;
+    int inCollision;
     BoxShape shape;
     int isScreenBorder;
 } RigidBody;
 
+typedef struct {
+    RigidBody* pointBody;
+    RigidBody* edgeBody;
+    Vector2 contactPointWorld;
+    Vector2 edgeNormalWorld;
+} PointToEdgeContactPoint;
+
+PointToEdgeContactPoint contactPoints[MAX_CONTACT_POINTS];
+int contactPointCount;
+
 RigidBody rigidBodies[NUM_RIGID_BODIES];
+
+void resetContactPoints() {
+    contactPointCount = 0;
+    for(int i=0; i<MAX_CONTACT_POINTS; ++i) {
+        contactPoints[i].edgeBody = NULL;
+        contactPoints[i].pointBody = NULL;
+        contactPoints[i].edgeNormalWorld = (Vector2){0, 0};
+        contactPoints[i].contactPointWorld = (Vector2){0, 0};
+    }
+}
+
+void addContactPoint(PointToEdgeContactPoint cp) {
+    contactPoints[contactPointCount] = cp;
+    ++contactPointCount;
+}
 
 float dotProduct(Vector2* v1, Vector2* v2) {
     return v1->x*v2->x + v1->y*v2->y;
@@ -582,7 +611,7 @@ void reflectBodyLinearVelocity(
         2.0 * velProj * outerNormal->y + rigidBody->linearVelocity.y;
 }
 
-Vector2 bodyPointWorlddVelociry(
+Vector2 bodyPointWorldVelocity(
     RigidBody* body,
     Vector2 bodyPointWorld
 ) {
@@ -600,8 +629,8 @@ float vrelNormlalProjection(
     Vector2 b1PointWorld,
     Vector2 b2ClosestNormalWorld
 ) {
-    Vector2 v1 = bodyPointWorlddVelociry(body1, b1PointWorld);
-    Vector2 v2 = bodyPointWorlddVelociry(body2, b1PointWorld);
+    Vector2 v1 = bodyPointWorldVelocity(body1, b1PointWorld);
+    Vector2 v2 = bodyPointWorldVelocity(body2, b1PointWorld);
     Vector2 vrel = { v1.x - v2.x, v1.y - v2.y};
     // relative velocity in b2ClosestNormalWorld direction
     float vRelative = dotProduct(
@@ -677,68 +706,76 @@ float calculateCollisionImpulse(
     return j;
 }
 
+void resetCollisionImpulses() {
 
-void updateCollisionImpulses(
-    RigidBody* body1,
-    // can be NULL so we use it as a collision with screen border 
-    RigidBody* body2,
-    Vector2 b1PointWorld,
-    Vector2 b2ClosestNormalWorld
+    for (int i=0; i<NUM_RIGID_BODIES; ++i) {
+        rigidBodies[i].collisionMomentumPulse = (Vector2){0, 0};
+        rigidBodies[i].collisionAngleMomentumPulse = 0;
+        rigidBodies[i].inCollision = 0;
+    }
+}
 
-) {
-    float THRESHOLD = 0;
-    // speed of collision point (linear + rotation) of 1st body
-    Vector2 v1 = bodyPointWorlddVelociry(body1, b1PointWorld);
-    Vector2 v2 = bodyPointWorlddVelociry(body2, b1PointWorld);
-    Vector2 vrel = { v1.x - v2.x, v1.y - v2.y};
-    // relative velocity in b2ClosestNormalWorld direction
-    float vRelative = dotProduct(
-        &b2ClosestNormalWorld, &vrel);
+void updateCollisionImpulses() {
 
-    if (vRelative < -THRESHOLD) {
-        // apply impulse
-        // add collision force based on impusle
-        float impulseMag = calculateCollisionImpulse(
-            1.0, body1, body2, b1PointWorld, b2ClosestNormalWorld
-        );
-        Vector2 momentumPulse = {
-            impulseMag*b2ClosestNormalWorld.x,
-            impulseMag*b2ClosestNormalWorld.y
-        };
-        if (body1->collisionCount < MAX_COLLISIONS_PER_BODY - 1) {
-            body1->collisionForces[body1->collisionCount].momentum = 
+    resetCollisionImpulses();
+
+    for (int cId = 0; cId < contactPointCount; ++cId)
+    {
+        float THRESHOLD = 0;
+        PointToEdgeContactPoint* cp = &contactPoints[cId];
+
+        // speed of collision point (linear + rotation) of 1st body
+        Vector2 v1 = bodyPointWorldVelocity(cp->pointBody, cp->contactPointWorld);
+        Vector2 v2 = bodyPointWorldVelocity(cp->edgeBody, cp->contactPointWorld);
+        Vector2 vrel = {v1.x - v2.x, v1.y - v2.y};
+        // relative velocity in b2ClosestNormalWorld direction
+        float vRelative = dotProduct(
+            &(cp->edgeNormalWorld), &vrel);
+
+        if (vRelative < -THRESHOLD)
+        {
+            // apply impulse
+            // add collision force based on impusle
+            float impulseMag = calculateCollisionImpulse(
+                1.0,
+                cp->pointBody, cp->edgeBody,
+                cp->contactPointWorld, cp->edgeNormalWorld
+            );
+            Vector2 momentumPulse = {
+                impulseMag * cp->edgeNormalWorld.x,
+                impulseMag * cp->edgeNormalWorld.y
+            };
+
+            cp->pointBody->collisionMomentumPulse =
                 momentumPulse;
-            Vector3 r1 = {
-                b1PointWorld.x - body1->position.x,
-                b1PointWorld.y - body1->position.y,
+            Vector3 r = {
+                cp->contactPointWorld.x - cp->pointBody->position.x,
+                cp->contactPointWorld.y - cp->pointBody->position.y,
                 0.0
             };
             Vector3 angMomentumPulse = crossProduct(
-                r1,
-                (Vector3){momentumPulse.x, momentumPulse.y, 0.0} 
+                r,
+                (Vector3){momentumPulse.x, momentumPulse.y, 0.0}
             );
-            body1->collisionForces[body1->collisionCount].angularMomentum =
+            cp->pointBody->collisionAngleMomentumPulse =
                 angMomentumPulse.z;
-            ++(body1->collisionCount);
-        }
+            cp->pointBody->inCollision = 1;
 
-        if (body2 == NULL) return;
-
-        if (body2->collisionCount < MAX_COLLISIONS_PER_BODY - 1) {
-            body2->collisionForces[body2->collisionCount].momentum = 
-                (Vector2){ momentumPulse.x, momentumPulse.y } ;
-            Vector3 r1 = {
-                b1PointWorld.x - body2->position.x,
-                b1PointWorld.y - body2->position.y,
-                0.0
-            };
-            Vector3 angMomentumPulse = crossProduct(
-                r1,
-                (Vector3){momentumPulse.x, momentumPulse.y, 0.0} 
-            );
-            body2->collisionForces[body2->collisionCount].angularMomentum =
-                -angMomentumPulse.z;
-            ++(body2->collisionCount);
+            cp->edgeBody->collisionMomentumPulse =
+                (Vector2){-momentumPulse.x, -momentumPulse.y};
+            r = (Vector3){
+                cp->contactPointWorld.x - cp->edgeBody->position.x,
+                cp->contactPointWorld.y - cp->edgeBody->position.y,
+                0.0};
+            angMomentumPulse = crossProduct(
+                r,
+                (Vector3){-momentumPulse.x, -momentumPulse.y, 0.0});
+            cp->edgeBody->collisionAngleMomentumPulse =
+                angMomentumPulse.z;
+            cp->edgeBody->inCollision = 1;
+        } else {
+            cp->edgeBody->inCollision = 0;
+            cp->pointBody->inCollision = 0;
         }
     }
 }
@@ -779,66 +816,85 @@ void updateCollisionForces(
     }
 }
 
-// 0 - means no collision
-int DetectLineSegmentCollision(
-    Vector2 *lineStart,
-    Vector2 *lineEnd,
-    // normal vector pointing outside of the object
-    Vector2 *outerNormal,
-    RigidBody *rigidBody) 
+int DetectPointToEdgeContact(
+    RigidBody *body1,
+    RigidBody *body2,
+    PointToEdgeContactPoint *cPoint)
 {
-    int i;
-    int collisionCount = 0;
-    int maxPenetrationDepthInx = -1;
-    float maxPenetrationDepth = -INFINITY;
-    Vector2 collisionPointWorld = {0, 0};
-    for (i=0; i<4; ++i) {
 
-        Vector2 bodyPointWorld = transformPointToWorldCoords(
-            rigidBody->shape.endpoints[i],
-            rigidBody->angle,
-            rigidBody->position
-        );
-        Vector2 pointToLineV;
+    // screen border can be only used as edges for collision check
+    if (body1->isScreenBorder == 1)
+    {
+        return 0;
+    }
+    int ptId = 0;
+    for (ptId = 0; ptId < 4; ++ptId)
+    {
 
-        // poit penetrartion deth
-        float penetrationDepth = pointToLineDistance(
-            *lineStart, *lineEnd, bodyPointWorld, &pointToLineV
-        );
-        float pointLineNormalDot = dotProduct(
-            &pointToLineV, outerNormal
-        );
-        /*
-        printf("ptV %d %.2e %.2e on %.2e %.2e\n",
-            i, pointToLineV.x, pointToLineV.y,
-             outerNormal->x, outerNormal->y
-        );
-        */
-        if (pointLineNormalDot > 0)
+        Vector2 currPoint = body1->shape.endpoints[ptId];
+        currPoint = transformPointToWorldCoords(
+            currPoint, body1->angle, body1->position);
+        Vector2 closestNormalWorld = {0, 0};
+        int closestEdgeId = -1;
+        float penDepth = 0;
+        int testResutl = 0;
+        if (body2->isScreenBorder)
         {
-            if (penetrationDepth > maxPenetrationDepth)
+            testResutl = IfPointOutsideBody(
+                currPoint, body2,
+                &closestNormalWorld, &closestEdgeId, &penDepth);
+        }
+        else
+        {
+            testResutl = IfPointInsideBody(
+                currPoint, body2,
+                &closestNormalWorld, &closestEdgeId, &penDepth);
+        }
+        if (testResutl == 1)
+        {
+            // reflectBodyLinearVelocity(body1, &closestNormalWorld);
+            // this means body1 vertex hits body2
+            Vector2 normal = closestNormalWorld;
+            if (body2->isScreenBorder)
             {
-                // select the point with max penetration
-                maxPenetrationDepth = penetrationDepth;
-                collisionPointWorld = bodyPointWorld;
-                maxPenetrationDepthInx = i;
+                normal = (Vector2){
+                    -closestNormalWorld.x,
+                    -closestNormalWorld.y};
+            }
+            cPoint->contactPointWorld = currPoint;
+            cPoint->pointBody = body1;
+            cPoint->edgeBody = body2;
+            cPoint->edgeNormalWorld = normal;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void updateContactPoints() {
+
+    resetContactPoints();
+
+    for (int firstId = 0; firstId < NUM_RIGID_BODIES; ++firstId)
+    {
+        for (int secId = 0; secId < NUM_RIGID_BODIES; ++secId)
+        {
+            if (firstId == secId) continue;
+            int testResult = 0;
+            PointToEdgeContactPoint newContact;
+            if (DetectPointToEdgeContact(
+                    &rigidBodies[firstId], &rigidBodies[secId], &newContact) == 0)
+            {
+                testResult = DetectPointToEdgeContact(
+                    &rigidBodies[secId], &rigidBodies[firstId], &newContact);
+            } else {
+                testResult = 1;
+            }
+            if (testResult == 1) {
+                addContactPoint(newContact);
             }
         }
     }
-
-    if (maxPenetrationDepthInx > -1)
-    {
-        updateCollisionForces(
-            rigidBody, NULL,
-            collisionPointWorld, *outerNormal, -1,
-            maxPenetrationDepth
-        );
-        return 1;
-        // reflectBodyLinearVelocity(rigidBody, outerNormal);
-    }
-
-   return 0;
-
 }
 
 // check collision of body1 verices 
@@ -1010,22 +1066,31 @@ void RunRigidBodySimulationMidpointV2(
     float dt
 ) {
 
-    // проверка соударений
-    // вычисление сил и моментов сил и скоростей
-    DetectColsAndUpdateForces(rigidBodies);
+    updateContactPoints();
+    updateCollisionImpulses();
     // if collision detec update linear and angular 
     // velocities
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        
-        RigidBody *rigidBody = &rigidBodies[i];
-        
-        for (int colId = 0; colId < rigidBody->collisionCount; ++colId) {
-            
-        }
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
 
-        // rigidBody->linearVelocity = rigidBody.c
+        RigidBody *rigidBody = &rigidBodies[i];
+        if (rigidBody->inCollision == 1)
+        {
+            rigidBody->linearVelocity = (Vector2)
+            {
+                rigidBody->collisionMomentumPulse.x /
+                    rigidBody->shape.mass,
+                    
+                    rigidBody->collisionMomentumPulse.y /
+                    rigidBody->shape.mass
+            };
+
+            rigidBody->angularVelocity =
+                rigidBody->collisionAngleMomentumPulse /
+                rigidBody->shape.momentOfInertia;
+        }
     }
-    
+
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
     Vector2 stepBeginPositions[NUM_RIGID_BODIES];
     float stepBeginAngles[NUM_RIGID_BODIES];
@@ -1069,9 +1134,7 @@ void RunRigidBodySimulationMidpointV2(
               rigidBody->angle );
         */
     }
-    // проверка соударений
-    // вычисление сил и моментов сил и скоростей
-    DetectColsAndUpdateForces(rigidBodies);
+    
     // init halfstep accelerations and velocities
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         halfStepAccel[i].x = rigidBodies[i].force.x/rigidBodies[i].shape.mass;
