@@ -7,14 +7,19 @@
 #endif
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-// #define NUM_RIGID_BODIES 6
+#define NUM_RIGID_BODIES 4
 // single body plus screen border body
 // for test run
-#define NUM_RIGID_BODIES 3
+// #define NUM_RIGID_BODIES 3
 #define MAX_CONTACT_POINTS NUM_RIGID_BODIES*5 
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
 #define COLLISION_FORCE_K 1000.0
+
+// minimul relative velocity to check for collision
+#define THRESHOLD 10.0f
+// restitution coefficient 
+#define EPS 1.0f
 
 //тело должно получить момент импульса при оталкивании
 //добавить стокновения 
@@ -380,13 +385,13 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
     // smaller body
     setupRigidBody(
         &rigidBodies[i],
-        (Vector2){0.2 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
+        (Vector2){0.3 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
         1,
         40,
         100,
         40,
-        (Vector2){10, -10},
-        10,
+        (Vector2){30, 30},
+        20,
         0,
         renderer,
         &rigidBodyTextures[i],
@@ -679,7 +684,6 @@ float vrelNormlalProjection(
 float calculateCollisionImpulse(
     float eps,
     RigidBody* body1,
-    // can be NULL so we use it as a collision with screen border 
     RigidBody* body2,
     Vector2 b1PointWorld,
     Vector2 b2ClosestNormalWorld
@@ -720,26 +724,27 @@ float calculateCollisionImpulse(
 // second body
     float term3 = 0;
     float term4 = 0;
-    if( body2 != NULL) {
-        Vector3 v2tmp = crossProduct(
-            (Vector3){rb2.x, rb2.y, 0.0},
-            (Vector3){b2ClosestNormalWorld.x, b2ClosestNormalWorld.y, 0.0});
-        float invIntertiaB2 = 1 / body2->shape.momentOfInertia;
-        v2tmp = (Vector3){
-            invIntertiaB2 * v2tmp.x,
-            invIntertiaB2 * v2tmp.y,
-            invIntertiaB2 * v2tmp.z};
-        v2tmp = crossProduct(
-            v2tmp,
-            (Vector3){rb2.x, rb2.y, 0.0});
-        float term3 = dotProduct(
-            &b2ClosestNormalWorld,
-            &((Vector2){v1tmp.x, v1tmp.y}));
 
-        float term4 = dotProduct(
-            &b2ClosestNormalWorld,
-            &((Vector2){v2tmp.x, v2tmp.y}));
-    }
+    Vector3 v2tmp = crossProduct(
+        (Vector3){rb2.x, rb2.y, 0.0},
+        (Vector3){b2ClosestNormalWorld.x, b2ClosestNormalWorld.y, 0.0});
+    float invIntertiaB2 = 1 / body2->shape.momentOfInertia;
+    v2tmp = (Vector3){
+        invIntertiaB2 * v2tmp.x,
+        invIntertiaB2 * v2tmp.y,
+        invIntertiaB2 * v2tmp.z};
+    v2tmp = crossProduct(
+        v2tmp,
+        (Vector3){rb2.x, rb2.y, 0.0});
+
+    term3 = dotProduct(
+        &b2ClosestNormalWorld,
+        &((Vector2){v1tmp.x, v1tmp.y}));
+
+    term4 = dotProduct(
+        &b2ClosestNormalWorld,
+        &((Vector2){v2tmp.x, v2tmp.y}));
+
     float j = numerator / (term1 + term2 + term3 + term4);
     return j;
 }
@@ -755,7 +760,7 @@ void resetCollisionImpulses() {
 
 int isColliding(PointToEdgeContactPoint *cp)
 {
-    float THRESHOLD = 10;
+    
     Vector2 v1 = bodyPointWorldVelocity(cp->pointBody, cp->contactPointWorld);
     Vector2 v2 = bodyPointWorldVelocity(cp->edgeBody, cp->contactPointWorld);
     Vector2 vrel = {v1.x - v2.x, v1.y - v2.y};
@@ -769,10 +774,21 @@ int isColliding(PointToEdgeContactPoint *cp)
         cp->isColliding = 1;
         return 1;
     }
+    /*
+    if (fabs(vRelative) < THRESHOLD) {
+        printf("resting contact !!!\n");
+    }
+    */
     if (cp->isColliding == 1)
     {
         printf("vrel- %.3e vrel+ %.3e \n",
-               cp->vrel, vRelative);
+               cp->vrel, vRelative
+        );
+        printf("pt: (%.3e %.3e) n: (%.3e %.3e) nl: %.3e\n",
+                cp->contactPointWorld.x, cp->contactPointWorld.y,
+                cp->edgeNormalWorld.x, cp->edgeNormalWorld.y,
+                length(&cp->edgeNormalWorld)
+        );
     }
     cp->vrel = vRelative;
     cp->isColliding = 0;
@@ -798,7 +814,7 @@ void updateCollisionImpulses() {
                 hasCollision = 1;
                 // calculate pulses for pointBody
                 float impulseMag = calculateCollisionImpulse(
-                    1.0,
+                    EPS,
                     cp->pointBody, cp->edgeBody,
                     cp->contactPointWorld, cp->edgeNormalWorld);
                 Vector2 momentumPulse = {
@@ -819,7 +835,7 @@ void updateCollisionImpulses() {
                 cp->pointBody->collisionAngleMomentumPulse +=
                     angMomentumPulse.z;
 
-                // update 1st body velociries
+                // update 1st body velocities
                 cp->pointBody->linearVelocity = (Vector2){
                     cp->pointBody->collisionMomentumPulse.x /
                         cp->pointBody->shape.mass,
@@ -1151,6 +1167,7 @@ void RunRigidBodySimulationMidpointV2(
 ) {
 
     updateContactPoints();
+    // printf("contact points updated\n");
     updateCollisionImpulses();
 
     // compute external force , e.g. gravity
@@ -1231,7 +1248,7 @@ void RunRigidBodySimulationMidpointV2(
         rigidBody->angle = stepBeginAngles[i] + halfStepAngularVel[i] * dt;
     }
 
-    SDL_Delay(dt * 1000);
+    // SDL_Delay(dt * 1000);
     *curTime += dt;
     
 }
@@ -1352,10 +1369,11 @@ int main() {
 
     float totalSimulationTime = 10000; 
     float currentTime = 0; 
-    float dt = 1.0 / 60.0; 
+    // dt in seconds
+    float dt = 0.01;
 
-    // InitializeRigidBodies(renderer);
-    InitializeTestRigidBodies(renderer);
+    InitializeRigidBodies(renderer);
+    // InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
