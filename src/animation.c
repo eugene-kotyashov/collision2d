@@ -7,7 +7,7 @@
 #endif
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 4
+#define NUM_RIGID_BODIES 5
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
@@ -17,7 +17,7 @@
 #define COLLISION_FORCE_K 1000.0
 
 // minimul relative velocity to check for collision
-#define THRESHOLD 10.0f
+#define THRESHOLD 0.0f
 // restitution coefficient 
 #define EPS 1.0f
 
@@ -80,7 +80,8 @@ typedef struct {
     RigidBody* edgeBody;
     Vector2 contactPointWorld;
     Vector2 edgeNormalWorld;
-    float vrel;
+    Vector2 vrel;
+    float vrelNormalProj;
     int isColliding;
 } PointToEdgeContactPoint;
 
@@ -98,14 +99,16 @@ void resetContactPoints() {
         contactPoints[i].contactPointWorld = (Vector2){0, 0};
         // next 2 fields are for debugging only
         contactPoints[i].isColliding = 0;
-        contactPoints[i].vrel = INFINITY;
+        contactPoints[i].vrel = (Vector2){INFINITY, INFINITY};
+        contactPoints[i].vrelNormalProj = INFINITY;
     }
 }
 
 void addContactPoint(PointToEdgeContactPoint cp) {
     contactPoints[contactPointCount] = cp;
     contactPoints[contactPointCount].isColliding = 0;
-    contactPoints[contactPointCount].vrel = INFINITY;
+    contactPoints[contactPointCount].vrel = (Vector2){INFINITY, INFINITY};
+    contactPoints[contactPointCount].vrelNormalProj = INFINITY;
     ++contactPointCount;
 }
 
@@ -348,12 +351,13 @@ void InitializeRigidBodies(SDL_Renderer *renderer) {
         setupRigidBody(
             &rigidBodies[i], 
             (Vector2){rand() % (SCREEN_WIDTH - 50), rand() % (SCREEN_HEIGHT - 50)},
-            1, 
+            1.0e+4,
+            // ((float)rand() / RAND_MAX)*5e3 + 1.0e+4, 
             10*(((float)rand() / RAND_MAX)*2 - 1),
-            (1 + rand() % 2 )* 100,
-            (1 + rand() % 2 )* 30,
+            ((float)rand() / RAND_MAX)*100 + 70,
+            ((float)rand() / RAND_MAX)*20 + 40,
             (Vector2){30, -30},
-            15*(((float)rand() / RAND_MAX)*2 - 1),
+            25*(((float)rand() / RAND_MAX)*2 - 1),
             0,
             renderer,
             &rigidBodyTextures[i],
@@ -367,31 +371,33 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
     InitializeScreenBorder(renderer);
     // big body
     int i = 1;
+    
     setupRigidBody(
         &rigidBodies[i],
-        (Vector2){0.5 * SCREEN_WIDTH, 0.5 * SCREEN_HEIGHT},
-        1,
+        (Vector2){0.6 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
+        1e+4,
         0,
-        400,
-        50,
-        (Vector2){0, 0},
+        100,
+        100,
+        (Vector2){-50, 0},
         0,
         0,
         renderer,
         &rigidBodyTextures[i],
         &bodyCentersTextures[i]);
-
+    
     ++i;
+    
     // smaller body
     setupRigidBody(
         &rigidBodies[i],
         (Vector2){0.3 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
-        1,
-        40,
+        1e+4,
+        45,
         100,
-        40,
-        (Vector2){30, 30},
-        20,
+        100,
+        (Vector2){50, 0},
+        0,
         0,
         renderer,
         &rigidBodyTextures[i],
@@ -658,11 +664,25 @@ Vector2 bodyPointWorldVelocity(
     RigidBody* body,
     Vector2 bodyPointWorld
 ) {
+    /*
     return (Vector2){
         body->linearVelocity.x - 
             body->angularVelocity*(bodyPointWorld.y-body->position.y),
         body->linearVelocity.y +
             body->angularVelocity*(bodyPointWorld.x - body->position.x)
+    };
+    */
+    Vector3 omega = {0, 0, body->angularVelocity};
+    Vector3 r = {
+        bodyPointWorld.x - body->position.x,
+        bodyPointWorld.y - body->position.y,
+        0
+    };
+
+    Vector3 vRot = crossProduct(omega, r);
+    return (Vector2){
+        body->linearVelocity.x + vRot.x,
+        body->linearVelocity.y + vRot.y
     };
 }
 
@@ -670,11 +690,14 @@ float vrelNormlalProjection(
     RigidBody* body1,
     RigidBody* body2,
     Vector2 b1PointWorld,
-    Vector2 b2ClosestNormalWorld
+    Vector2 b2ClosestNormalWorld,
+    Vector2* vectorVrel
 ) {
     Vector2 v1 = bodyPointWorldVelocity(body1, b1PointWorld);
     Vector2 v2 = bodyPointWorldVelocity(body2, b1PointWorld);
     Vector2 vrel = { v1.x - v2.x, v1.y - v2.y};
+    vectorVrel->x = vrel.x;
+    vectorVrel->y = vrel.y;
     // relative velocity in b2ClosestNormalWorld direction
     float vRelative = dotProduct(
         &b2ClosestNormalWorld, &vrel);
@@ -688,9 +711,10 @@ float calculateCollisionImpulse(
     Vector2 b1PointWorld,
     Vector2 b2ClosestNormalWorld
 ) {
-
+    Vector2 vRelTmp;
     float vrel = vrelNormlalProjection(
-        body1, body2, b1PointWorld, b2ClosestNormalWorld
+        body1, body2,
+        b1PointWorld, b2ClosestNormalWorld, &vRelTmp
     );
     float numerator = -(1 + eps)*vrel;
     float term1 = 1/ body1->shape.mass;
@@ -760,29 +784,33 @@ void resetCollisionImpulses() {
 
 int isColliding(PointToEdgeContactPoint *cp)
 {
-    
-    Vector2 v1 = bodyPointWorldVelocity(cp->pointBody, cp->contactPointWorld);
-    Vector2 v2 = bodyPointWorldVelocity(cp->edgeBody, cp->contactPointWorld);
-    Vector2 vrel = {v1.x - v2.x, v1.y - v2.y};
-    // relative velocity in b2ClosestNormalWorld direction
-    float vRelative = dotProduct(
-        &(cp->edgeNormalWorld), &vrel);
-    
-    if (vRelative < -THRESHOLD)
+    Vector2 vrel;
+    float vNormalProj = vrelNormlalProjection(
+        cp->pointBody, cp->edgeBody,
+        cp->contactPointWorld, cp->edgeNormalWorld,
+        &vrel
+    );
+    if (vNormalProj < -THRESHOLD)
     {
-        cp->vrel = vRelative;
+        cp->vrel = vrel;
+        cp->vrelNormalProj = vNormalProj;
         cp->isColliding = 1;
         return 1;
     }
     /*
-    if (fabs(vRelative) < THRESHOLD) {
+    if (fabs(vNormalProj) < THRESHOLD) {
         printf("resting contact !!!\n");
     }
     */
     if (cp->isColliding == 1)
     {
-        printf("vrel- %.3e vrel+ %.3e \n",
-               cp->vrel, vRelative
+        printf("vrel- (%.3e %.3e) vrel+ (%.3e, %.3e)\n",
+               cp->vrel.x, cp->vrel.y, 
+               vrel.x, vrel.y
+        );
+        printf("vrel- %.3e vrel+ %.3e rat %.3e\n",
+               cp->vrelNormalProj, vNormalProj,
+               vNormalProj/cp->vrelNormalProj
         );
         printf("pt: (%.3e %.3e) n: (%.3e %.3e) nl: %.3e\n",
                 cp->contactPointWorld.x, cp->contactPointWorld.y,
@@ -790,7 +818,7 @@ int isColliding(PointToEdgeContactPoint *cp)
                 length(&cp->edgeNormalWorld)
         );
     }
-    cp->vrel = vRelative;
+    cp->vrelNormalProj = vNormalProj;
     cp->isColliding = 0;
     return 0;
 }
@@ -821,8 +849,8 @@ void updateCollisionImpulses() {
                     impulseMag * cp->edgeNormalWorld.x,
                     impulseMag * cp->edgeNormalWorld.y};
 
-                cp->pointBody->collisionMomentumPulse.x += momentumPulse.x;
-                cp->pointBody->collisionMomentumPulse.y += momentumPulse.y;
+                cp->pointBody->collisionMomentumPulse.x = momentumPulse.x;
+                cp->pointBody->collisionMomentumPulse.y = momentumPulse.y;
 
                 Vector3 r = {
                     cp->contactPointWorld.x - cp->pointBody->position.x,
@@ -832,24 +860,25 @@ void updateCollisionImpulses() {
                     r,
                     (Vector3){momentumPulse.x, momentumPulse.y, 0.0});
 
-                cp->pointBody->collisionAngleMomentumPulse +=
+                cp->pointBody->collisionAngleMomentumPulse =
                     angMomentumPulse.z;
 
                 // update 1st body velocities
-                cp->pointBody->linearVelocity = (Vector2){
+                cp->pointBody->linearVelocity.x += 
                     cp->pointBody->collisionMomentumPulse.x /
-                        cp->pointBody->shape.mass,
+                        cp->pointBody->shape.mass;
 
+                cp->pointBody->linearVelocity.y += 
                     cp->pointBody->collisionMomentumPulse.y /
-                        cp->pointBody->shape.mass};
+                        cp->pointBody->shape.mass;
 
-                cp->pointBody->angularVelocity =
+                cp->pointBody->angularVelocity +=
                     cp->pointBody->collisionAngleMomentumPulse /
                     cp->pointBody->shape.momentOfInertia;
 
                 // calculate pulses for edgeBody
-                cp->edgeBody->collisionMomentumPulse.x += -momentumPulse.x;
-                cp->edgeBody->collisionMomentumPulse.y += -momentumPulse.y;
+                cp->edgeBody->collisionMomentumPulse.x = -momentumPulse.x;
+                cp->edgeBody->collisionMomentumPulse.y = -momentumPulse.y;
 
                 r = (Vector3){
                     cp->contactPointWorld.x - cp->edgeBody->position.x,
@@ -858,18 +887,18 @@ void updateCollisionImpulses() {
                 angMomentumPulse = crossProduct(
                     r,
                     (Vector3){-momentumPulse.x, -momentumPulse.y, 0.0});
-                cp->edgeBody->collisionAngleMomentumPulse += angMomentumPulse.z;
+                cp->edgeBody->collisionAngleMomentumPulse = angMomentumPulse.z;
 
 
                 // update velocities for 2nd body
-                cp->edgeBody->linearVelocity = (Vector2){
+                cp->edgeBody->linearVelocity.x += 
                     cp->edgeBody->collisionMomentumPulse.x /
-                        cp->edgeBody->shape.mass,
-
+                        cp->edgeBody->shape.mass;
+                cp->edgeBody->linearVelocity.y += 
                     cp->edgeBody->collisionMomentumPulse.y /
-                        cp->edgeBody->shape.mass};
+                        cp->edgeBody->shape.mass;
 
-                cp->edgeBody->angularVelocity =
+                cp->edgeBody->angularVelocity +=
                     cp->edgeBody->collisionAngleMomentumPulse /
                     cp->edgeBody->shape.momentOfInertia;
             }
@@ -916,8 +945,7 @@ void updateCollisionForces(
 
 int DetectPointToEdgeContact(
     RigidBody *body1,
-    RigidBody *body2,
-    PointToEdgeContactPoint *cPoint)
+    RigidBody *body2)
 {
 
     // screen border can be only used as edges for collision check
@@ -925,6 +953,7 @@ int DetectPointToEdgeContact(
     {
         return 0;
     }
+    int result = 0;
     int ptId = 0;
     for (ptId = 0; ptId < 4; ++ptId)
     {
@@ -959,14 +988,15 @@ int DetectPointToEdgeContact(
                     -closestNormalWorld.x,
                     -closestNormalWorld.y};
             }
-            cPoint->contactPointWorld = currPoint;
-            cPoint->pointBody = body1;
-            cPoint->edgeBody = body2;
-            cPoint->edgeNormalWorld = normal;
-            return 1;
+            PointToEdgeContactPoint cPoint;
+            cPoint.contactPointWorld = currPoint;
+            cPoint.pointBody = body1;
+            cPoint.edgeBody = body2;
+            cPoint.edgeNormalWorld = normal;
+            addContactPoint(cPoint);
         }
     }
-    return 0;
+    return result;
 }
 
 void updateContactPoints() {
@@ -982,10 +1012,10 @@ void updateContactPoints() {
             int testResult = 0;
             PointToEdgeContactPoint newContact;
             if (DetectPointToEdgeContact(
-                    &rigidBodies[firstId], &rigidBodies[secId], &newContact) == 0)
+                    &rigidBodies[firstId], &rigidBodies[secId]) == 0)
             {
                 testResult = DetectPointToEdgeContact(
-                    &rigidBodies[secId], &rigidBodies[firstId], &newContact);
+                    &rigidBodies[secId], &rigidBodies[firstId]);
             } else {
                 testResult = 1;
             }
@@ -1217,6 +1247,11 @@ void RunRigidBodySimulationMidpointV2(
               rigidBody->angularVelocity,
               rigidBody->angle );
         */
+    }
+
+    // compute external force , e.g. gravity
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
+        ComputeForceAndTorque(&rigidBodies[i]);
     }
     
     // init halfstep accelerations and velocities
