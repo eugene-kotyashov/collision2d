@@ -11,7 +11,7 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 5
+#define NUM_RIGID_BODIES 2
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
@@ -21,7 +21,8 @@
 #define COLLISION_FORCE_K 1000.0
 
 // minimul relative velocity to check for collision
-#define THRESHOLD 0.0f
+#define THRESHOLD 10.0f
+#define MIN_PENETRATION_DEPTH  5.0f
 // restitution coefficient 
 #define EPS 1.0f
 
@@ -71,6 +72,7 @@ typedef struct {
     Vector2 edgeNormalWorld;
     Vector2 vrel;
     float vrelNormalProj;
+    float penetrationDepth;
     int isColliding;
 } PointToEdgeContactPoint;
 
@@ -88,6 +90,7 @@ void resetContactPoints() {
         contactPoints[i].contactPointWorld = (Vector2){0, 0};
         // next 2 fields are for debugging only
         contactPoints[i].isColliding = 0;
+        contactPoints[i].penetrationDepth = 0;
         contactPoints[i].vrel = (Vector2){INFINITY, INFINITY};
         contactPoints[i].vrelNormalProj = INFINITY;
     }
@@ -284,16 +287,16 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         &rigidBodies[i],
         (Vector2){0.6 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
         1e+4,
-        0,
+        30,
         100,
         100,
-        (Vector2){-50, 0},
+        (Vector2){-150, 0},
         0,
         0,
         renderer,
         &rigidBodyTextures[i],
         &bodyCentersTextures[i]);
-    
+    /*
     ++i;
     
     // smaller body
@@ -310,6 +313,7 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         renderer,
         &rigidBodyTextures[i],
         &bodyCentersTextures[i]);
+    */
 }
 
 SDL_Window *InitSDL() {
@@ -705,11 +709,13 @@ int isColliding(PointToEdgeContactPoint *cp)
         cp->isColliding = 1;
         return 1;
     }
-    /*
-    if (fabs(vNormalProj) < THRESHOLD) {
-        printf("resting contact !!!\n");
+    
+    if (fabs(vNormalProj) <= THRESHOLD) {
+        printf("resting contact, pen Depth is %.3e\n",
+        cp->penetrationDepth);
+        return 2;
     }
-    */
+
     if (cp->isColliding == 1)
     {
         printf("vrel- (%.3e %.3e) vrel+ (%.3e, %.3e)\n",
@@ -729,6 +735,61 @@ int isColliding(PointToEdgeContactPoint *cp)
     cp->vrelNormalProj = vNormalProj;
     cp->isColliding = 0;
     return 0;
+}
+
+float calculateDampingForceValue(
+    float penDepth
+) {
+    if (penDepth < 0) return 0.0f;
+    return COLLISION_FORCE_K*penDepth;
+}
+
+
+void applyCollisionForces()
+{
+    for (int cId = 0; cId < contactPointCount; ++cId)
+    {
+        PointToEdgeContactPoint *cp = &contactPoints[cId];
+        if (isColliding(cp) == 2)
+        {
+            float forceValue = 
+                calculateDampingForceValue(cp->penetrationDepth);
+            Vector2 forceOnPointBody = (Vector2){
+                forceValue * cp->edgeNormalWorld.x,
+                forceValue * cp->edgeNormalWorld.y
+            };
+            Vector2 forceOnEdgeBody = (Vector2){
+                -forceOnPointBody.x,
+                -forceOnPointBody.y
+            };
+            cp->pointBody->force.x += forceValue*cp->edgeNormalWorld.x;
+            cp->pointBody->force.y += forceValue*cp->edgeNormalWorld.y;
+            Vector3 rA = {
+                cp->contactPointWorld.x - cp->pointBody->position.x,
+                cp->contactPointWorld.y - cp->pointBody->position.y,
+                0.0
+            };
+            Vector3 torque = crossProduct(
+                rA,
+                (Vector3){forceOnPointBody.x, forceOnPointBody.y, 0.0}
+            );
+            cp->pointBody->torque += torque.z;;
+
+            // edge body
+            cp->edgeBody->force.x += forceValue*cp->edgeNormalWorld.x;
+            cp->edgeBody->force.y += forceValue*cp->edgeNormalWorld.y;
+            rA = (Vector3) {
+                cp->contactPointWorld.x - cp->edgeBody->position.x,
+                cp->contactPointWorld.y - cp->edgeBody->position.y,
+                0.0};
+            torque = crossProduct(
+                rA,
+                (Vector3){forceOnEdgeBody.x, forceOnEdgeBody.y, 0.0}
+            );
+            
+            cp->edgeBody->torque += torque.z;
+        }
+    }
 }
 
 void updateCollisionImpulses() {
@@ -814,7 +875,6 @@ void updateCollisionImpulses() {
 
     } while (hasCollision == 1);
 }
-
 // update forces when edge point from body1
 // penetrates body2
 void updateCollisionForces(
@@ -832,10 +892,11 @@ void updateCollisionForces(
     body1ColForce.applicationPoint = b1PointWorld;
     // используем силу соударения пропроциональную глубине 
     // проникновения
+    float forceVal = calculateDampingForceValue(b2PenetrationDepth);
     body1ColForce.force.x = 
-        COLLISION_FORCE_K*b2PenetrationDepth*b2ClosestNormalWorld.x;
+        forceVal*b2ClosestNormalWorld.x;
     body1ColForce.force.y =
-        COLLISION_FORCE_K*b2PenetrationDepth*b2ClosestNormalWorld.y;
+        forceVal*b2ClosestNormalWorld.y;
     if (body1->collisionCount < MAX_COLLISIONS_PER_BODY - 1) {
         //we can now add collision to body1
         body1->collisionForces[body1->collisionCount] = body1ColForce;
@@ -897,6 +958,7 @@ int DetectPointToEdgeContact(
                     -closestNormalWorld.y};
             }
             PointToEdgeContactPoint cPoint;
+            cPoint.penetrationDepth = penDepth;
             cPoint.contactPointWorld = currPoint;
             cPoint.pointBody = body1;
             cPoint.edgeBody = body2;
@@ -1112,6 +1174,8 @@ void RunRigidBodySimulationMidpointV2(
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         ComputeForceAndTorque(&rigidBodies[i]);
     }
+
+    applyCollisionForces();
     
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
     Vector2 stepBeginPositions[NUM_RIGID_BODIES];
@@ -1155,11 +1219,6 @@ void RunRigidBodySimulationMidpointV2(
               rigidBody->angularVelocity,
               rigidBody->angle );
         */
-    }
-
-    // compute external force , e.g. gravity
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        ComputeForceAndTorque(&rigidBodies[i]);
     }
     
     // init halfstep accelerations and velocities
@@ -1315,8 +1374,8 @@ int main() {
     // dt in seconds
     float dt = 0.01;
 
-    InitializeRigidBodies(renderer);
-    // InitializeTestRigidBodies(renderer);
+    // InitializeRigidBodies(renderer);
+    InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
