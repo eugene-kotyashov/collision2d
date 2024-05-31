@@ -11,7 +11,7 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 2
+#define NUM_RIGID_BODIES 5
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
@@ -22,10 +22,10 @@
 // collision damping coefficient
 #define COLLISION_FORCE_K 1e9
 
-#define CONTACT_DISTANCE 10
+#define CONTACT_DISTANCE 1
 // minimum relative velocity to apply impulse
 // collision model
-#define THRESHOLD 10.0f
+#define THRESHOLD 1.0f
 // restitution coefficient 
 #define EPS 1.0f
 
@@ -110,11 +110,10 @@ void addContactPoint(PointToEdgeContactPoint cp) {
 
 Vector2 transformPointToWorldCoords(
     Vector2 localPoint,
-    float angleDeg,
+    float angleRad,
     Vector2 position)
 {
     Vector2 result = {INFINITY, INFINITY};
-    float angleRad = M_PI*angleDeg/180;
     //rotation
     result = rotateVector(&localPoint, angleRad);
     // translation
@@ -180,7 +179,7 @@ void setupRigidBody(
     float width,
     float height,
     Vector2 linearVelocity,
-    float angularVelocity,
+    float angularVelocityDegPerSec,
     // 1 - if body is a screen border, 0 otherwise
     int isScreenBorder,
     SDL_Renderer *renderer,
@@ -190,9 +189,10 @@ void setupRigidBody(
     ) {
         rigidBody->isScreenBorder = isScreenBorder;
         rigidBody->position = position;
-        rigidBody->angle = angleDegrees;
+        rigidBody->angle = M_PI*angleDegrees/180.0f;
         rigidBody->linearVelocity = linearVelocity;
-        rigidBody->angularVelocity = angularVelocity;
+        rigidBody->angularVelocity = 
+            M_PI*angularVelocityDegPerSec/180.0f;
 
         BoxShape shape;
         shape.mass = mass;
@@ -291,11 +291,11 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         &rigidBodies[i],
         (Vector2){0.6 * SCREEN_WIDTH, 0.3 * SCREEN_HEIGHT},
         1e+4,
-        30,
+        40,
         100,
         100,
-        (Vector2){-150, 0},
-        0,
+        (Vector2){-10, 0},
+        10,
         0,
         renderer,
         &rigidBodyTextures[i],
@@ -362,7 +362,7 @@ void DrawRigidBodies(SDL_Renderer *renderer)
     {
 
         RigidBody *rigidBody = &rigidBodies[i];
-        float angle = rigidBody->angle;
+        float angle = 180.0f*rigidBody->angle/M_PI;
         SDL_Point bodyCenter = {rigidBody->position.x, rigidBody->position.y};
         SDL_Rect dstrect = {
             (int)(rigidBody->position.x - 0.5 * rigidBody->shape.width),
@@ -414,7 +414,7 @@ void DrawRigidBodies(SDL_Renderer *renderer)
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
             Vector2 n1 = rotateVector(
                 &(rigidBody->shape.edgeNormals[j]),
-                M_PI * rigidBody->angle / 180);
+                rigidBody->angle);
             Vector2 n1Start = (Vector2){
                 0.5 * (p1.x + p2.x),
                 0.5 * (p1.y + p2.y)};
@@ -474,7 +474,7 @@ int IfPointOutsideBody(
         int fistVertexId = edgeId;
         int secondVertexId = (edgeId+1) % 4;
         Vector2 edgeNormal = body->shape.edgeNormals[edgeId];
-        edgeNormal = rotateVector(&edgeNormal, M_PI*body->angle/180.0);
+        edgeNormal = rotateVector(&edgeNormal, body->angle);
         Vector2 edgeFirstVertex = body->shape.endpoints[fistVertexId];
         edgeFirstVertex = transformPointToWorldCoords(
             edgeFirstVertex, body->angle, body->position
@@ -530,7 +530,7 @@ int IfPointInsideBody(
         int fistVertexId = edgeId;
         int secondVertexId = (edgeId+1) % 4;
         Vector2 edgeNormal = body->shape.edgeNormals[edgeId];
-        edgeNormal = rotateVector(&edgeNormal, M_PI*body->angle/180.0);
+        edgeNormal = rotateVector(&edgeNormal, body->angle);
         Vector2 edgeFirstVertex = body->shape.endpoints[fistVertexId];
         edgeFirstVertex = transformPointToWorldCoords(
             edgeFirstVertex, body->angle, body->position
@@ -739,19 +739,19 @@ int isColliding(PointToEdgeContactPoint *cp)
 
     if (vNormalProj < -THRESHOLD)
     {
-        printContact(iterationCount, "colliding", cp);
+        // printContact(iterationCount, "colliding", cp);
         cp->isColliding = 1;
         return 1;
     }
     
     if (fabs(vNormalProj) <= THRESHOLD) {
-        printContact(iterationCount, "resting", cp);
+        // printContact(iterationCount, "resting", cp);
         cp->isColliding = 2;
         return 2;
     }
 
     if (vNormalProj > THRESHOLD) {
-        printContact(iterationCount, "separating", cp);
+        // printContact(iterationCount, "separating", cp);
         cp->isColliding = 0;
     }
     
@@ -957,21 +957,22 @@ int DetectPointToEdgeContact(
         int closestEdgeId = -1;
         float penDepth = 0;
         int testResutl = 0;
-        if (body2->isScreenBorder)
-        {
+        //if (body2->isScreenBorder)
+        //{
             testResutl = IfPointInsideBody(
                 currPoint, body2,
                 &closestNormalWorld, &closestEdgeId, &penDepth);
             testResutl = IfPointOutsideBody(
                 currPoint, body2,
                 &closestNormalWorld, &closestEdgeId, &penDepth);
-        }
+        /*}
         else
         {
             testResutl = IfPointOutsideBody(
                 currPoint, body2,
                 &closestNormalWorld, &closestEdgeId, &penDepth);
         }
+        */
         if (testResutl == 1)
         {
             // reflectBodyLinearVelocity(body1, &closestNormalWorld);
@@ -1200,7 +1201,8 @@ void RunRigidBodySimulationMidpointV2(
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         ComputeForceAndTorque(&rigidBodies[i]);
     }
-
+    // this can be uncommented for a simple way of
+    // handling resting contacts 
     // applyCollisionForces();
     
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
@@ -1401,7 +1403,7 @@ int main() {
     float dt = 0.01;
 
     InitializeRigidBodies(renderer);
-    //InitializeTestRigidBodies(renderer);
+    // InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
