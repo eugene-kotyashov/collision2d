@@ -11,20 +11,23 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 2
+#define NUM_RIGID_BODIES 3
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
 #define MAX_CONTACT_POINTS NUM_RIGID_BODIES*5 
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
-#define COLLISION_FORCE_K 1000.0
 
-// minimul relative velocity to check for collision
+// collision damping coefficient
+#define COLLISION_FORCE_K 1e9
+
+#define CONTACT_DISTANCE 10
+// minimum relative velocity to apply impulse
+// collision model
 #define THRESHOLD 10.0f
-#define MIN_PENETRATION_DEPTH  5.0f
 // restitution coefficient 
-#define EPS 1.0f
+#define EPS 0.5f
 
 typedef struct {
     Vector2 force;
@@ -465,7 +468,7 @@ int IfPointOutsideBody(
 ) {
 
     int edgeId = 0;
-    float minPenetrationDepth = INFINITY;
+    float maxOutsideDistance = -INFINITY;
     for (edgeId=0; edgeId<4; ++edgeId) {
         int fistVertexId = edgeId;
         int secondVertexId = (edgeId+1) % 4;
@@ -481,7 +484,7 @@ int IfPointOutsideBody(
         );
 
         Vector2 pointToLineV;
-        // poit penetrartion deth
+        // poit penetrartion depth
         float penetrationDepth = pointToLineDistance(
             edgeFirstVertex, edgeSecondVertex, pointWorld, &pointToLineV
         );
@@ -491,8 +494,8 @@ int IfPointOutsideBody(
 
         if (pointLineNormalDot <= 0) {
             // this means point is outside a body
-            if (penetrationDepth < minPenetrationDepth) {
-                minPenetrationDepth = penetrationDepth;
+            if (penetrationDepth > maxOutsideDistance) {
+                maxOutsideDistance = penetrationDepth;
                 *closestEdgeId = edgeId;
                 *closestNormalWorld = edgeNormal;
             }
@@ -500,10 +503,15 @@ int IfPointOutsideBody(
 
     }
     
-    if (minPenetrationDepth == INFINITY) {
+    if (maxOutsideDistance == -INFINITY) {
         return 0;
     }
-    *penDepth = minPenetrationDepth;
+
+    if (maxOutsideDistance > CONTACT_DISTANCE) {
+        return 0;
+    }
+
+    *penDepth = maxOutsideDistance;
     return 1;
 }
 
@@ -553,6 +561,9 @@ int IfPointInsideBody(
             }
         }
 
+    }
+    if (minPenetrationDepth > CONTACT_DISTANCE) {
+        return 0;
     }
     *penDepth = minPenetrationDepth;
     return 1;
@@ -747,6 +758,8 @@ float calculateDampingForceValue(
 
 void applyCollisionForces()
 {
+    // FIXME: mirrot edge normal in case of collision 
+    // with a "border" type body
     for (int cId = 0; cId < contactPointCount; ++cId)
     {
         PointToEdgeContactPoint *cp = &contactPoints[cId];
@@ -936,13 +949,13 @@ int DetectPointToEdgeContact(
         int testResutl = 0;
         if (body2->isScreenBorder)
         {
-            testResutl = IfPointOutsideBody(
+            testResutl = IfPointInsideBody(
                 currPoint, body2,
                 &closestNormalWorld, &closestEdgeId, &penDepth);
         }
         else
         {
-            testResutl = IfPointInsideBody(
+            testResutl = IfPointOutsideBody(
                 currPoint, body2,
                 &closestNormalWorld, &closestEdgeId, &penDepth);
         }
@@ -1175,7 +1188,7 @@ void RunRigidBodySimulationMidpointV2(
         ComputeForceAndTorque(&rigidBodies[i]);
     }
 
-    applyCollisionForces();
+    // applyCollisionForces();
     
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
     Vector2 stepBeginPositions[NUM_RIGID_BODIES];
@@ -1374,8 +1387,8 @@ int main() {
     // dt in seconds
     float dt = 0.01;
 
-    // InitializeRigidBodies(renderer);
-    InitializeTestRigidBodies(renderer);
+    InitializeRigidBodies(renderer);
+    //InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
