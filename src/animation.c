@@ -11,7 +11,7 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 3
+#define NUM_RIGID_BODIES 2
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
@@ -27,7 +27,7 @@
 // collision model
 #define THRESHOLD 10.0f
 // restitution coefficient 
-#define EPS 0.5f
+#define EPS 1.0f
 
 typedef struct {
     Vector2 force;
@@ -83,6 +83,7 @@ PointToEdgeContactPoint contactPoints[MAX_CONTACT_POINTS];
 int contactPointCount;
 
 RigidBody rigidBodies[NUM_RIGID_BODIES];
+int iterationCount = 0;
 
 void resetContactPoints() {
     contactPointCount = 0;
@@ -705,6 +706,26 @@ void resetCollisionImpulses() {
     }
 }
 
+void printContact(
+    int itCount,
+    char* contactTypeText, 
+    PointToEdgeContactPoint* cp) {
+    printf(
+        "%7d: %s depth: %.2e pt: (%.2e %.2e)\n",
+        iterationCount,
+        contactTypeText,
+        cp->penetrationDepth,
+        cp->contactPointWorld.x, cp->contactPointWorld.y
+    );
+    printf(
+        "%7d: vrel (%.2e %.2e) vnp %.2e normal (%.2e %.2e)\n\n",
+        iterationCount,
+        cp->vrel.x, cp->vrel.y,
+        cp->vrelNormalProj,
+        cp->edgeNormalWorld.x, cp->edgeNormalWorld.y
+    );
+}
+
 int isColliding(PointToEdgeContactPoint *cp)
 {
     Vector2 vrel;
@@ -713,38 +734,27 @@ int isColliding(PointToEdgeContactPoint *cp)
         cp->contactPointWorld, cp->edgeNormalWorld,
         &vrel
     );
+    cp->vrelNormalProj = vNormalProj;
+    cp->vrel = vrel;
+
     if (vNormalProj < -THRESHOLD)
     {
-        cp->vrel = vrel;
-        cp->vrelNormalProj = vNormalProj;
+        printContact(iterationCount, "colliding", cp);
         cp->isColliding = 1;
         return 1;
     }
     
     if (fabs(vNormalProj) <= THRESHOLD) {
-        printf("resting contact, pen Depth is %.3e\n",
-        cp->penetrationDepth);
+        printContact(iterationCount, "resting", cp);
+        cp->isColliding = 2;
         return 2;
     }
 
-    if (cp->isColliding == 1)
-    {
-        printf("vrel- (%.3e %.3e) vrel+ (%.3e, %.3e)\n",
-               cp->vrel.x, cp->vrel.y, 
-               vrel.x, vrel.y
-        );
-        printf("vrel- %.3e vrel+ %.3e rat %.3e\n",
-               cp->vrelNormalProj, vNormalProj,
-               vNormalProj/cp->vrelNormalProj
-        );
-        printf("pt: (%.3e %.3e) n: (%.3e %.3e) nl: %.3e\n",
-                cp->contactPointWorld.x, cp->contactPointWorld.y,
-                cp->edgeNormalWorld.x, cp->edgeNormalWorld.y,
-                length(&cp->edgeNormalWorld)
-        );
+    if (vNormalProj > THRESHOLD) {
+        printContact(iterationCount, "separating", cp);
+        cp->isColliding = 0;
     }
-    cp->vrelNormalProj = vNormalProj;
-    cp->isColliding = 0;
+    
     return 0;
 }
 
@@ -950,6 +960,9 @@ int DetectPointToEdgeContact(
         if (body2->isScreenBorder)
         {
             testResutl = IfPointInsideBody(
+                currPoint, body2,
+                &closestNormalWorld, &closestEdgeId, &penDepth);
+            testResutl = IfPointOutsideBody(
                 currPoint, body2,
                 &closestNormalWorld, &closestEdgeId, &penDepth);
         }
@@ -1392,6 +1405,8 @@ int main() {
 
     SDL_Event e;
     int quit = 0;
+    float timeBetweenRender = 1.0/25.0f;
+    float frameTime = 0;
     while (quit == 0)
     {
         if (currentTime < totalSimulationTime)
@@ -1403,15 +1418,17 @@ int main() {
             RunRigidBodySimulationMidpointV2(
                 renderer, &currentTime, dt
             );
-            
+            ++iterationCount;
+            frameTime+= dt;
         }
-
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); 
-        SDL_RenderClear(renderer);
-
-        DrawRigidBodies(renderer);
-
-        SDL_RenderPresent(renderer);
+        if (frameTime > timeBetweenRender)
+        {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+            DrawRigidBodies(renderer);
+            SDL_RenderPresent(renderer);
+            frameTime = 0.0f;
+        }
 
         while (SDL_PollEvent(&e))
         {
