@@ -19,7 +19,7 @@
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
 
-#define CONTACT_DISTANCE 1
+#define CONTACT_DISTANCE 10
 // minimum relative velocity to apply impulse
 // collision model
 #define THRESHOLD 1.0f
@@ -126,7 +126,10 @@ void CalculateBoxInertia(BoxShape *boxShape) {
     boxShape->momentOfInertia = m * (w * w + h * h) / 12;
 }
 
-void ComputeForceAndTorque(RigidBody *rigidBody) {
+// compute force and torque at given time t
+void ComputeForceAndTorque(
+    float time, 
+    RigidBody *rigidBody) {
     // глобальная сила действующая не зависимо от соударений
     Vector2 f = {0, 0};
     rigidBody->force = f;
@@ -449,7 +452,8 @@ void getMinMaxPointToEdgeDistance(
         Vector2 pointToLineV;
         // poit penetrartion depth
         float penetrationDepth = pointToLineDistance(
-            edgeFirstVertex, edgeSecondVertex, pointWorld, &pointToLineV
+            edgeFirstVertex, edgeSecondVertex,
+            pointWorld, &pointToLineV
         );
         float pointLineNormalDot = dotProduct(
             &pointToLineV, &edgeNormal
@@ -793,20 +797,12 @@ int DetectPointToEdgeContact(
             currPoint, body2);
         if (testResutl == 1)
         {
-            if (minDistance >= CONTACT_DISTANCE)
-                testResutl = 0;
-            else
-            {
+            if (minDistance <= CONTACT_DISTANCE) {
                 contactEdgeNormal = minDistNormal;
+                penDepth = minDistance;
             }
-        }
-        else
-        {
-            // outside check is nessesary for
-            if (maxDistance <= CONTACT_DISTANCE)
-            {
-                testResutl = 1;
-                contactEdgeNormal = maxDistNormal;
+            else {
+                testResutl = 0;
             }
         }
 
@@ -884,15 +880,6 @@ void RunRigidBodySimulationMidpointV2(
     float *curTime,
     float dt
 ) {
-
-    updateContactPoints();
-    // printf("contact points updated\n");
-    updateCollisionImpulses();
-
-    // compute external force , e.g. gravity
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        ComputeForceAndTorque(&rigidBodies[i]);
-    }
     
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
     Vector2 stepBeginPositions[NUM_RIGID_BODIES];
@@ -999,12 +986,20 @@ int main() {
     {
         if (currentTime < totalSimulationTime)
         {
-           
+            updateContactPoints();
+            // printf("contact points updated\n");
+            updateCollisionImpulses();
+
+            // compute external force , e.g. gravity
+            for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+            {
+                ComputeForceAndTorque(
+                    currentTime, &rigidBodies[i]);
+            }
             RunRigidBodySimulationMidpointV2(
-                renderer, &currentTime, dt
-            );
+                renderer, &currentTime, dt);
             ++iterationCount;
-            frameTime+= dt;
+            frameTime += dt;
         }
         if (frameTime > timeBetweenRender)
         {
