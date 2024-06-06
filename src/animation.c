@@ -421,19 +421,18 @@ void CloseSDL(SDL_Window *window) {
     SDL_Quit();
 }
 
-// this is needed for contact point 
-// determination from a "border" object
-int IfPointOutsideBody(
+void getMinMaxPointToEdgeDistance(
     Vector2 pointWorld,
     RigidBody* body,
-    Vector2* closestNormalWorld,
-    int* closestEdgeId,
-    float* penDepth
+    float* maxDistance,
+    float* minDistance,
+    Vector2* maxDistanceNormal,
+    Vector2* minDistanceNormal
 ) {
+    *maxDistance = -INFINITY;
+    *minDistance = INFINITY;
 
-    int edgeId = 0;
-    float maxOutsideDistance = -INFINITY;
-    for (edgeId=0; edgeId<4; ++edgeId) {
+    for (int edgeId=0; edgeId<4; ++edgeId) {
         int fistVertexId = edgeId;
         int secondVertexId = (edgeId+1) % 4;
         Vector2 edgeNormal = body->shape.edgeNormals[edgeId];
@@ -456,35 +455,21 @@ int IfPointOutsideBody(
             &pointToLineV, &edgeNormal
         );
 
-        if (pointLineNormalDot <= 0) {
-            // this means point is outside a body
-            if (penetrationDepth > maxOutsideDistance) {
-                maxOutsideDistance = penetrationDepth;
-                *closestEdgeId = edgeId;
-                *closestNormalWorld = edgeNormal;
-            }
+        if (penetrationDepth > *maxDistance) {
+            *maxDistance = penetrationDepth;
+            *maxDistanceNormal = edgeNormal;
         }
-
+        if (penetrationDepth < *minDistance) {
+            *minDistance = penetrationDepth;
+            *minDistanceNormal = edgeNormal;
+        }
     }
-    
-    if (maxOutsideDistance == -INFINITY) {
-        return 0;
-    }
-
-    if (maxOutsideDistance > CONTACT_DISTANCE) {
-        return 0;
-    }
-
-    *penDepth = maxOutsideDistance;
-    return 1;
 }
 
 int IfPointInsideBody(
     Vector2 pointWorld,
-    RigidBody* body,
-    Vector2* closestNormalWorld,
-    int* closestEdgeId,
-    float* penDepth
+    RigidBody* body
+
 ) {
 
     int edgeId = 0;
@@ -517,19 +502,8 @@ int IfPointInsideBody(
             return 0;
         }
         
-        if (pointLineNormalDot > 0) {
-            if (penetrationDepth < minPenetrationDepth) {
-                minPenetrationDepth = penetrationDepth;
-                *closestEdgeId = edgeId;
-                *closestNormalWorld = edgeNormal;
-            }
-        }
-
     }
-    if (minPenetrationDepth > CONTACT_DISTANCE) {
-        return 0;
-    }
-    *penDepth = minPenetrationDepth;
+    
     return 1;
 }
 
@@ -806,32 +780,46 @@ int DetectPointToEdgeContact(
         int closestEdgeId = -1;
         float penDepth = 0;
         int testResutl = 0;
-        //if (body2->isScreenBorder)
-        //{
-            testResutl = IfPointInsideBody(
-                currPoint, body2,
-                &closestNormalWorld, &closestEdgeId, &penDepth);
-            testResutl = IfPointOutsideBody(
-                currPoint, body2,
-                &closestNormalWorld, &closestEdgeId, &penDepth);
-        /*}
+
+        Vector2 contactEdgeNormal = {0, 0};
+        float minDistance, maxDistance;
+        Vector2 minDistNormal = {0, 0}, maxDistNormal = {0, 0};
+        getMinMaxPointToEdgeDistance(
+            currPoint, body2, &maxDistance, &minDistance,
+            &maxDistNormal, &minDistNormal
+
+        );
+        testResutl = IfPointInsideBody(
+            currPoint, body2);
+        if (testResutl == 1)
+        {
+            if (minDistance >= CONTACT_DISTANCE)
+                testResutl = 0;
+            else
+            {
+                contactEdgeNormal = minDistNormal;
+            }
+        }
         else
         {
-            testResutl = IfPointOutsideBody(
-                currPoint, body2,
-                &closestNormalWorld, &closestEdgeId, &penDepth);
+            // outside check is nessesary for
+            if (maxDistance <= CONTACT_DISTANCE)
+            {
+                testResutl = 1;
+                contactEdgeNormal = maxDistNormal;
+            }
         }
-        */
+
         if (testResutl == 1)
         {
             // reflectBodyLinearVelocity(body1, &closestNormalWorld);
             // this means body1 vertex hits body2
-            Vector2 normal = closestNormalWorld;
+            Vector2 normal = contactEdgeNormal;
             if (body2->isScreenBorder)
             {
                 normal = (Vector2){
-                    -closestNormalWorld.x,
-                    -closestNormalWorld.y};
+                    -contactEdgeNormal.x,
+                    -contactEdgeNormal.y};
             }
             PointToEdgeContactPoint cPoint;
             cPoint.penetrationDepth = penDepth;
