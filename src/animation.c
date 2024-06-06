@@ -877,7 +877,6 @@ void printAngleStuff() {
 // andgular momentum pulse value
 void RunRigidBodySimulationMidpointV2(
     SDL_Renderer *renderer,
-    float *curTime,
     float dt
 ) {
     
@@ -953,9 +952,6 @@ void RunRigidBodySimulationMidpointV2(
         rigidBody->angularVelocity = stepBeginAngularVel[i] + halfStepAngAccel[i] * dt;
         rigidBody->angle = stepBeginAngles[i] + halfStepAngularVel[i] * dt;
     }
-
-    // SDL_Delay(dt * 1000);
-    *curTime += dt;
     
 }
 
@@ -971,7 +967,7 @@ int main() {
     testGeometryFunctions();
 
     float totalSimulationTime = 10000; 
-    float currentTime = 0; 
+    float simulationTime = 0; 
     // dt in seconds
     float dt = 0.01;
 
@@ -984,7 +980,7 @@ int main() {
     float frameTime = 0;
     while (quit == 0)
     {
-        if (currentTime < totalSimulationTime)
+        if (simulationTime < totalSimulationTime)
         {
             updateContactPoints();
             // printf("contact points updated\n");
@@ -994,10 +990,12 @@ int main() {
             for (int i = 0; i < NUM_RIGID_BODIES; ++i)
             {
                 ComputeForceAndTorque(
-                    currentTime, &rigidBodies[i]);
+                    simulationTime, &rigidBodies[i]);
             }
             RunRigidBodySimulationMidpointV2(
-                renderer, &currentTime, dt);
+                renderer, dt);
+            // SDL_Delay(dt * 1000);
+            simulationTime += dt;
             ++iterationCount;
             frameTime += dt;
         }
