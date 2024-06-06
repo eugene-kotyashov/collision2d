@@ -11,7 +11,7 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 5
+#define NUM_RIGID_BODIES 3
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
@@ -266,7 +266,7 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         renderer,
         &rigidBodyTextures[i],
         &bodyCentersTextures[i]);
-    /*
+    
     ++i;
     
     // smaller body
@@ -283,7 +283,7 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         renderer,
         &rigidBodyTextures[i],
         &bodyCentersTextures[i]);
-    */
+    
 }
 
 SDL_Window *InitSDL() {
@@ -427,13 +427,18 @@ void CloseSDL(SDL_Window *window) {
 void getMinMaxPointToEdgeDistance(
     Vector2 pointWorld,
     RigidBody* body,
-    float* maxDistance,
-    float* minDistance,
-    Vector2* maxDistanceNormal,
-    Vector2* minDistanceNormal
+    // if point is outside the body we found 
+    // the minimal distance if point is projected on
+    // edge between edge's vertices, otherwise
+    // min outside distance is not updated
+    float* minOutsideDistance,
+    float* minInsideDistance,
+    Vector2* closestOutsideNormal,
+    Vector2* closestInsideNormal
+    
 ) {
-    *maxDistance = -INFINITY;
-    *minDistance = INFINITY;
+    *minOutsideDistance = INFINITY;
+    *minInsideDistance = INFINITY;
 
     for (int edgeId=0; edgeId<4; ++edgeId) {
         int fistVertexId = edgeId;
@@ -459,13 +464,36 @@ void getMinMaxPointToEdgeDistance(
             &pointToLineV, &edgeNormal
         );
 
-        if (penetrationDepth > *maxDistance) {
-            *maxDistance = penetrationDepth;
-            *maxDistanceNormal = edgeNormal;
+        if (pointLineNormalDot > 0)
+        {
+            if (penetrationDepth < *minInsideDistance)
+            {
+                *minInsideDistance = penetrationDepth;
+                *closestInsideNormal = edgeNormal;
+            }
         }
-        if (penetrationDepth < *minDistance) {
-            *minDistance = penetrationDepth;
-            *minDistanceNormal = edgeNormal;
+        else
+        {
+            if (penetrationDepth < *minOutsideDistance)
+            {
+                // check if pointWorld projection to 
+                // current edge is between edge's vertices
+                Vector2 ptToVert1 = (Vector2) {
+                    edgeFirstVertex.x - pointWorld.x,
+                    edgeFirstVertex.y - pointWorld.y
+                };
+                Vector2 ptToVert2 = (Vector2) {
+                    edgeSecondVertex.x - pointWorld.x,
+                    edgeSecondVertex.y - pointWorld.y
+                };
+                float ptEdgesDot = dotProduct(
+                    &ptToVert1, &ptToVert2
+                );
+                if (ptEdgesDot < 0) {
+                    *minOutsideDistance = penetrationDepth;
+                    *closestOutsideNormal = edgeNormal;
+                }
+            }
         }
     }
 }
@@ -762,6 +790,12 @@ void updateCollisionImpulses() {
     } while (hasCollision == 1);
 }
 
+
+// return values meaning:
+// value 0 means no contact
+// value 1 means only valid contacts added
+// value 2 means simulation recalculation is required
+
 int DetectPointToEdgeContact(
     RigidBody *body1,
     RigidBody *body2)
@@ -783,33 +817,64 @@ int DetectPointToEdgeContact(
         Vector2 closestNormalWorld = {0, 0};
         int closestEdgeId = -1;
         float penDepth = 0;
-        int testResutl = 0;
+        
 
         Vector2 contactEdgeNormal = {0, 0};
-        float minDistance, maxDistance;
-        Vector2 minDistNormal = {0, 0}, maxDistNormal = {0, 0};
+        float minOutDist, minInnerDist;
+        Vector2 closestOutNormal = {0, 0};
+        Vector2 closestInnnerNormal = {0, 0};
         getMinMaxPointToEdgeDistance(
-            currPoint, body2, &maxDistance, &minDistance,
-            &maxDistNormal, &minDistNormal
-
+            currPoint, body2,
+            &minOutDist, &minInnerDist,
+            &closestOutNormal, &closestInnnerNormal
         );
-        testResutl = IfPointInsideBody(
+        // TODO: check case when 
+        // body2 is "screen border" body type
+        
+        int collisionDistanceTest = 0;
+        int isInisde = IfPointInsideBody(
             currPoint, body2);
-        if (testResutl == 1)
+        if (isInisde == 1)
         {
-            if (minDistance <= CONTACT_DISTANCE) {
-                contactEdgeNormal = minDistNormal;
-                penDepth = minDistance;
+            if (minInnerDist <= CONTACT_DISTANCE) {
+                contactEdgeNormal = closestInnnerNormal;
+                penDepth = minInnerDist;
+                collisionDistanceTest = 1;
+                printf("inner contact %.3e\n", penDepth);
             }
             else {
-                testResutl = 0;
+                // this means penetration inside is too high
+                // we need to recalculate contact points 
+                // by restarting simulation at using half 
+                // timestep
+                if (body2->isScreenBorder == 1) { 
+                    // no coll points to be added
+                    collisionDistanceTest = 2;
+                } else {
+                    // return 2;
+                }
+            }
+        } else {
+            // this means point is outside 
+            if (minOutDist <= CONTACT_DISTANCE) {
+                contactEdgeNormal = closestOutNormal;
+                penDepth = minOutDist;
+                collisionDistanceTest = 1;
+                printf("outer contact %.3e\n", penDepth);
+            } else {
+                // too far outside is OK (but not for screen border)
+                // means no collision point to be added
+                if (body2->isScreenBorder) {
+                    // return 2;
+                }
+                collisionDistanceTest = 2;
             }
         }
 
-        if (testResutl == 1)
+        if (collisionDistanceTest == 1)
         {
-            // reflectBodyLinearVelocity(body1, &closestNormalWorld);
             // this means body1 vertex hits body2
+            // add new contact point 
             Vector2 normal = contactEdgeNormal;
             if (body2->isScreenBorder)
             {
@@ -824,6 +889,7 @@ int DetectPointToEdgeContact(
             cPoint.edgeBody = body2;
             cPoint.edgeNormalWorld = normal;
             addContactPoint(cPoint);
+            result = 1;
         }
     }
     return result;
@@ -849,12 +915,10 @@ void updateContactPoints() {
             } else {
                 testResult = 1;
             }
-            if (testResult == 1) {
-                addContactPoint(newContact);
-            }
         }
     }
-    // printf("check count %d\n", checkCount);
+    if (contactPointCount > 0 )
+        printf("contact point count %d\n", contactPointCount);
 }
 
 void printAngleStuff() {
@@ -971,8 +1035,8 @@ int main() {
     // dt in seconds
     float dt = 0.01;
 
-    InitializeRigidBodies(renderer);
-    // InitializeTestRigidBodies(renderer);
+    // InitializeRigidBodies(renderer);
+    InitializeTestRigidBodies(renderer);
 
     SDL_Event e;
     int quit = 0;
@@ -990,12 +1054,15 @@ int main() {
             for (int i = 0; i < NUM_RIGID_BODIES; ++i)
             {
                 ComputeForceAndTorque(
-                    simulationTime, &rigidBodies[i]);
+                    simulationTime,
+                    &rigidBodies[i]
+                );
             }
             RunRigidBodySimulationMidpointV2(
                 renderer, dt);
             // SDL_Delay(dt * 1000);
             simulationTime += dt;
+
             ++iterationCount;
             frameTime += dt;
         }
