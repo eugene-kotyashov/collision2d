@@ -19,9 +19,6 @@
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
 
-// collision damping coefficient
-#define COLLISION_FORCE_K 1e9
-
 #define CONTACT_DISTANCE 1
 // minimum relative velocity to apply impulse
 // collision model
@@ -133,43 +130,11 @@ void ComputeForceAndTorque(RigidBody *rigidBody) {
     // глобальная сила действующая не зависимо от соударений
     Vector2 f = {0, 0};
     rigidBody->force = f;
-    rigidBody->torque = 0;
-    int i =0;
-    for (i=0; i<rigidBody->collisionCount; ++i) {
-        Vector2 colForce = rigidBody->collisionForces[i].force;
-        rigidBody->force.x += colForce.x;
-        rigidBody->force.y += colForce.y;
-        // радус вектор верщины участвующей в столкновении
-        Vector2 worldEndpoint = 
-            rigidBody->collisionForces[i].applicationPoint;
-        Vector2 r = {worldEndpoint.x - rigidBody->position.x,
-                    worldEndpoint.y - rigidBody->position.y
-        };
-
-        float colTorque = r.x*colForce.y - r.y*colForce.x;
-        rigidBody->torque += colTorque;
-    }
-    
+    rigidBody->torque = 0;    
 }
-
-
 
 SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
 SDL_Texture *bodyCentersTextures[NUM_RIGID_BODIES];
-
-void resetCollisionForces(RigidBody *body)
-{
-    Vector2 zeroVec = {0, 0};
-    int i = 0;
-    body->collisionCount = 0;
-    for (i = 0; i < MAX_COLLISIONS_PER_BODY; ++i)
-    {
-        body->collisionForces[i].force = zeroVec;
-        body->collisionForces[i].applicationPoint = zeroVec;
-        body->collisionForces[i].angularMomentum = 0;
-        body->collisionForces[i].momentum = zeroVec;
-    }
-}
 
 void setupRigidBody(
     RigidBody *rigidBody,
@@ -212,8 +177,6 @@ void setupRigidBody(
         shape.edgeNormals[1] = (Vector2){1, 0};
         shape.edgeNormals[2] = (Vector2){0, 1};
         shape.edgeNormals[3] = (Vector2){-1, 0};
-
-        resetCollisionForces(rigidBody);
 
         CalculateBoxInertia(&shape);
         rigidBody->shape = shape;
@@ -570,32 +533,11 @@ int IfPointInsideBody(
     return 1;
 }
 
-void reflectBodyLinearVelocity(
-    RigidBody *rigidBody,
-    Vector2 *outerNormal)
-{
-    float velProj = fabs(dotProduct(
-        &(rigidBody->linearVelocity),
-        outerNormal));
-
-    rigidBody->linearVelocity.x =
-        2.0 * velProj * outerNormal->x + rigidBody->linearVelocity.x;
-    rigidBody->linearVelocity.y =
-        2.0 * velProj * outerNormal->y + rigidBody->linearVelocity.y;
-}
-
 Vector2 bodyPointWorldVelocity(
     RigidBody* body,
     Vector2 bodyPointWorld
 ) {
-    /*
-    return (Vector2){
-        body->linearVelocity.x - 
-            body->angularVelocity*(bodyPointWorld.y-body->position.y),
-        body->linearVelocity.y +
-            body->angularVelocity*(bodyPointWorld.x - body->position.x)
-    };
-    */
+    
     Vector3 omega = {0, 0, body->angularVelocity};
     Vector3 r = {
         bodyPointWorld.x - body->position.x,
@@ -712,14 +654,14 @@ void printContact(
     PointToEdgeContactPoint* cp) {
     printf(
         "%7d: %s depth: %.2e pt: (%.2e %.2e)\n",
-        iterationCount,
+        itCount,
         contactTypeText,
         cp->penetrationDepth,
         cp->contactPointWorld.x, cp->contactPointWorld.y
     );
     printf(
         "%7d: vrel (%.2e %.2e) vnp %.2e normal (%.2e %.2e)\n\n",
-        iterationCount,
+        itCount,
         cp->vrel.x, cp->vrel.y,
         cp->vrelNormalProj,
         cp->edgeNormalWorld.x, cp->edgeNormalWorld.y
@@ -756,63 +698,6 @@ int isColliding(PointToEdgeContactPoint *cp)
     }
     
     return 0;
-}
-
-float calculateDampingForceValue(
-    float penDepth
-) {
-    if (penDepth < 0) return 0.0f;
-    return COLLISION_FORCE_K*penDepth;
-}
-
-
-void applyCollisionForces()
-{
-    // FIXME: mirrot edge normal in case of collision 
-    // with a "border" type body
-    for (int cId = 0; cId < contactPointCount; ++cId)
-    {
-        PointToEdgeContactPoint *cp = &contactPoints[cId];
-        if (isColliding(cp) == 2)
-        {
-            float forceValue = 
-                calculateDampingForceValue(cp->penetrationDepth);
-            Vector2 forceOnPointBody = (Vector2){
-                forceValue * cp->edgeNormalWorld.x,
-                forceValue * cp->edgeNormalWorld.y
-            };
-            Vector2 forceOnEdgeBody = (Vector2){
-                -forceOnPointBody.x,
-                -forceOnPointBody.y
-            };
-            cp->pointBody->force.x += forceValue*cp->edgeNormalWorld.x;
-            cp->pointBody->force.y += forceValue*cp->edgeNormalWorld.y;
-            Vector3 rA = {
-                cp->contactPointWorld.x - cp->pointBody->position.x,
-                cp->contactPointWorld.y - cp->pointBody->position.y,
-                0.0
-            };
-            Vector3 torque = crossProduct(
-                rA,
-                (Vector3){forceOnPointBody.x, forceOnPointBody.y, 0.0}
-            );
-            cp->pointBody->torque += torque.z;;
-
-            // edge body
-            cp->edgeBody->force.x += forceValue*cp->edgeNormalWorld.x;
-            cp->edgeBody->force.y += forceValue*cp->edgeNormalWorld.y;
-            rA = (Vector3) {
-                cp->contactPointWorld.x - cp->edgeBody->position.x,
-                cp->contactPointWorld.y - cp->edgeBody->position.y,
-                0.0};
-            torque = crossProduct(
-                rA,
-                (Vector3){forceOnEdgeBody.x, forceOnEdgeBody.y, 0.0}
-            );
-            
-            cp->edgeBody->torque += torque.z;
-        }
-    }
 }
 
 void updateCollisionImpulses() {
@@ -897,42 +782,6 @@ void updateCollisionImpulses() {
         }
 
     } while (hasCollision == 1);
-}
-// update forces when edge point from body1
-// penetrates body2
-void updateCollisionForces(
-    RigidBody* body1,
-    // can be NULL so we use it as a collision with screen border 
-    RigidBody* body2,
-    Vector2 b1PointWorld,
-    Vector2 b2ClosestNormalWorld,
-    int b2ClosestEdgeId,
-    float b2PenetrationDepth
-) 
-{
-    
-    CollisionForce body1ColForce;
-    body1ColForce.applicationPoint = b1PointWorld;
-    // используем силу соударения пропроциональную глубине 
-    // проникновения
-    float forceVal = calculateDampingForceValue(b2PenetrationDepth);
-    body1ColForce.force.x = 
-        forceVal*b2ClosestNormalWorld.x;
-    body1ColForce.force.y =
-        forceVal*b2ClosestNormalWorld.y;
-    if (body1->collisionCount < MAX_COLLISIONS_PER_BODY - 1) {
-        //we can now add collision to body1
-        body1->collisionForces[body1->collisionCount] = body1ColForce;
-        ++(body1->collisionCount);
-    }
-    if (body2 == NULL) return;
-    if (body2->collisionCount < MAX_COLLISIONS_PER_BODY - 1) {
-        // add the same force as for 1st body but with opposite sign
-        body2->collisionForces[body2->collisionCount] = body1ColForce;
-        body2->collisionForces[body2->collisionCount].force.x *= -1.0;
-        body2->collisionForces[body2->collisionCount].force.y *= -1.0;
-        ++(body2->collisionCount);
-    }
 }
 
 int DetectPointToEdgeContact(
@@ -1024,151 +873,6 @@ void updateContactPoints() {
     // printf("check count %d\n", checkCount);
 }
 
-// check collision of body1 verices 
-// against body2 edges
-// if there is a collision returns 1, 0 otherwise
-int DetectBodyToBodyCollisions(
-    RigidBody* body1,
-    RigidBody* body2 
-) {
-
-    // screen border can be only used as edges for collision check
-    if (body1->isScreenBorder == 1) { return 0; }
-    int ptId = 0;
-    for(ptId =0; ptId < 4; ++ptId) {
-
-        Vector2 currPoint = body1->shape.endpoints[ptId];
-        currPoint = transformPointToWorldCoords(
-            currPoint, body1->angle, body1->position
-        );
-        Vector2 closestNormalWorld = {0, 0};
-        int closestEdgeId = -1;
-        float penDepth = 0;
-        int testResutl = 0;
-        if (body2->isScreenBorder)
-        {
-            testResutl = IfPointOutsideBody(
-                currPoint, body2,
-                &closestNormalWorld, &closestEdgeId, &penDepth);
-        }
-        else
-        {
-            testResutl = IfPointInsideBody(
-                currPoint, body2,
-                &closestNormalWorld, &closestEdgeId, &penDepth);
-        }
-        if (testResutl == 1) {
-            // reflectBodyLinearVelocity(body1, &closestNormalWorld);
-            // this means body1 vertex hits body2
-            Vector2 normal = closestNormalWorld;
-            if (body2->isScreenBorder) {
-                normal = (Vector2){
-                    -closestNormalWorld.x,
-                    -closestNormalWorld.y
-                };
-            }
-            updateCollisionForces(body1, body2,
-            currPoint, normal, closestEdgeId, penDepth);
-            return 1;
-        }
-    }
-    return 0;
-}
-
-void DetectCollision(RigidBody *rigidBody) {
-    // Столкновение с границами окна
-    if (rigidBody->position.x < 0) {
-        rigidBody->position.x = 0;
-        rigidBody->linearVelocity.x = -rigidBody->linearVelocity.x;
-    } else if (rigidBody->position.x + rigidBody->shape.width > SCREEN_WIDTH) {
-        rigidBody->position.x = SCREEN_WIDTH - rigidBody->shape.width;
-        rigidBody->linearVelocity.x = -rigidBody->linearVelocity.x;
-    }
-
-    if (rigidBody->position.y < 0) {
-        rigidBody->position.y = 0;
-        rigidBody->linearVelocity.y = -rigidBody->linearVelocity.y;
-    } else if (rigidBody->position.y + rigidBody->shape.height > SCREEN_HEIGHT) {
-        rigidBody->position.y = SCREEN_HEIGHT - rigidBody->shape.height;
-        rigidBody->linearVelocity.y = -rigidBody->linearVelocity.y;
-    }
-}
-
-void DetectColsAndUpdateForces(RigidBody* rigidBodies) {
-
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        resetCollisionForces(&rigidBodies[i]);
-    }
-    
-
-    for (int firstId = 0; firstId < NUM_RIGID_BODIES; ++firstId)
-    {
-        for (int secId = 0; secId < NUM_RIGID_BODIES; ++secId)
-        {
-            if (firstId == secId) continue;
-            if (DetectBodyToBodyCollisions(
-                    &rigidBodies[firstId], &rigidBodies[secId]) == 0)
-            {
-                DetectBodyToBodyCollisions(
-                    &rigidBodies[secId], &rigidBodies[firstId]);
-            }
-        }
-    }
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        ComputeForceAndTorque(&rigidBodies[i]);
-    }
-
-}
-
-void RunRigidBodySimulationEuler(SDL_Renderer *renderer, float dt)
-{
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
-    {
-        RigidBody *rigidBody = &rigidBodies[i];
-        // ПОменять метод Эйлера на метод средней точки
-        Vector2 linearAcceleration = (Vector2){
-            rigidBody->force.x / rigidBody->shape.mass,
-             rigidBody->force.y / rigidBody->shape.mass
-        };
-        rigidBody->linearVelocity.x += linearAcceleration.x * dt;
-        rigidBody->linearVelocity.y += linearAcceleration.y * dt;
-        rigidBody->position.x += rigidBody->linearVelocity.x * dt;
-        rigidBody->position.y += rigidBody->linearVelocity.y * dt;
-        float angularAcceleration = 
-            rigidBody->torque / rigidBody->shape.momentOfInertia;
-        rigidBody->angularVelocity += angularAcceleration * dt;
-        rigidBody->angle += rigidBody->angularVelocity * dt;
-    }
-    // проверка соударений
-
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        resetCollisionForces(&rigidBodies[i]);
-    }
-
-    for (int firstId = 0; firstId < NUM_RIGID_BODIES; ++firstId)
-    {
-        for (int secId = 0; secId < NUM_RIGID_BODIES; ++secId)
-        {
-            if (firstId == secId) continue;
-            if (DetectBodyToBodyCollisions(
-                    &rigidBodies[firstId], &rigidBodies[secId]) == 0)
-            {
-                DetectBodyToBodyCollisions(
-                    &rigidBodies[secId], &rigidBodies[firstId]);
-            }
-        }
-    }
-    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
-        ComputeForceAndTorque(&rigidBodies[i]);
-    }
-/*
-    for (int i = 0; i< NUM_RIGID_BODIES; ++i) {
-        printf(" %i %.4e", i, rigidBodies[i].angle);
-    }
-    printf("\n");
-*/
-}
-
 void printAngleStuff() {
     for (int i = 0; i < NUM_RIGID_BODIES; ++i)
     {
@@ -1201,9 +905,6 @@ void RunRigidBodySimulationMidpointV2(
     for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
         ComputeForceAndTorque(&rigidBodies[i]);
     }
-    // this can be uncommented for a simple way of
-    // handling resting contacts 
-    // applyCollisionForces();
     
     Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
     Vector2 stepBeginPositions[NUM_RIGID_BODIES];
@@ -1283,109 +984,6 @@ void RunRigidBodySimulationMidpointV2(
     
 }
 
-
-
-void RunRigidBodySimulationMidpoint(
-    SDL_Renderer *renderer,
-    float *curTime,
-    float dt
-) {
-    
-    Vector2 stepBeginVelocities[NUM_RIGID_BODIES];
-    Vector2 stepBeginPositions[NUM_RIGID_BODIES];
-    float stepBeginAngles[NUM_RIGID_BODIES];
-    float stepBeginAngularVel[NUM_RIGID_BODIES];
-
-    Vector2 halfStepAccel[NUM_RIGID_BODIES];
-    float halfStepAngAccel[NUM_RIGID_BODIES];
-    float halfStepAngularVel[NUM_RIGID_BODIES];
-    Vector2 halfStepVelocities[NUM_RIGID_BODIES];
-
-    // process rigidBodies array starting from index 1
-    // because 0 is used for screen borders "body"
-    // save step start parameters to use later 
-    // for midstep calculation
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        RigidBody *rigidBody = &rigidBodies[i];
-        stepBeginPositions[i] = rigidBody->position;
-        stepBeginVelocities[i] = rigidBody->linearVelocity;
-        stepBeginAngles[i] = rigidBody->angle;
-        stepBeginAngularVel[i] = rigidBody->angularVelocity;
-    }
-
-    // проверка соударений
-    // вычисление сил и моментов сил и скоростей
-    DetectColsAndUpdateForces(rigidBodies);
-    
-    // do half step calculations
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
-    {
-        RigidBody *rigidBody = &rigidBodies[i];
-        
-        Vector2 linearAcceleration = {0, 0};
-        /*
-        float angularAcceleration = 0;
-        if (rigidBody->shape.mass != 0)
-        {
-        */
-            linearAcceleration = (Vector2){
-                rigidBody->force.x / rigidBody->shape.mass,
-                rigidBody->force.y / rigidBody->shape.mass
-            };
-        // }
-        rigidBody->linearVelocity.x += linearAcceleration.x*0.5*dt;
-        rigidBody->linearVelocity.y += linearAcceleration.y*0.5*dt;
-        rigidBody->position.x += rigidBody->linearVelocity.x*0.5*dt;
-        rigidBody->position.y += rigidBody->linearVelocity.y*0.5*dt;
-
-        float angularAcceleration = 
-            rigidBody->torque / rigidBody->shape.momentOfInertia;
-        rigidBody->angularVelocity += angularAcceleration*0.5*dt;
-        rigidBody->angle += rigidBody->angularVelocity*0.5*dt;
-        /*
-         printf(" %i accel %.4e avel %.4e ang %.4e\n",
-             i, angularAcceleration,
-              rigidBody->angularVelocity,
-              rigidBody->angle );
-        */
-    }
-    // проверка соударений
-    // вычисление сил и моментов сил и скоростей
-    DetectColsAndUpdateForces(rigidBodies);
-    // init halfstep accelerations and velocities
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i) {
-        halfStepAccel[i].x = rigidBodies[i].force.x/rigidBodies[i].shape.mass;
-        halfStepAccel[i].y = rigidBodies[i].force.y/rigidBodies[i].shape.mass;
-
-        halfStepAngAccel[i] = 
-            rigidBodies[i].torque/rigidBodies[i].shape.momentOfInertia;
-        halfStepVelocities[i] = rigidBodies[i].linearVelocity;
-        halfStepAngularVel[i] = rigidBodies[i].angularVelocity;
-    }
-    // do fullstep now
-    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
-    {
-        RigidBody *rigidBody = &rigidBodies[i];
-       
-        rigidBody->linearVelocity.x = 
-            stepBeginVelocities[i].x + halfStepAccel[i].x * dt;
-        rigidBody->linearVelocity.y =
-             stepBeginVelocities[i].y + halfStepAccel[i].y * dt;
-
-        rigidBody->position.x = 
-            stepBeginPositions[i].x + halfStepVelocities[i].x * dt;
-        rigidBody->position.y = 
-            stepBeginPositions[i].y + halfStepVelocities[i].y * dt;
-
-        rigidBody->angularVelocity = stepBeginAngularVel[i] + halfStepAngAccel[i] * dt;
-        rigidBody->angle = stepBeginAngles[i] + halfStepAngularVel[i] * dt;
-    }
-
-    SDL_Delay(dt * 1000);
-    *curTime += dt;
-    
-}
-
 int main() {
     SDL_Window *window = InitSDL();
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -1413,10 +1011,7 @@ int main() {
     {
         if (currentTime < totalSimulationTime)
         {
-            /*
-            RunRigidBodySimulationMidpoint(
-                renderer, &currentTime, dt);
-            */
+           
             RunRigidBodySimulationMidpointV2(
                 renderer, &currentTime, dt
             );
