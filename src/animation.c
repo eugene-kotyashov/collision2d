@@ -11,7 +11,7 @@
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define NUM_RIGID_BODIES 3
+#define NUM_RIGID_BODIES 5
 // single body plus screen border body
 // for test run
 // #define NUM_RIGID_BODIES 3
@@ -19,7 +19,7 @@
 #define MAX_COLLISIONS_PER_BODY 10
 #define BODY_CENTER_TEXTURE_SIZE 10
 
-#define CONTACT_DISTANCE 10
+#define CONTACT_DISTANCE 0.01
 // minimum relative velocity to apply impulse
 // collision model
 #define THRESHOLD 1.0f
@@ -128,12 +128,16 @@ void CalculateBoxInertia(BoxShape *boxShape) {
 
 // compute force and torque at given time t
 void ComputeForceAndTorque(
-    float time, 
-    RigidBody *rigidBody) {
+    float time)
+{
     // глобальная сила действующая не зависимо от соударений
     Vector2 f = {0, 0};
-    rigidBody->force = f;
-    rigidBody->torque = 0;    
+    for (int i = 0; i < NUM_RIGID_BODIES; ++i)
+    {
+        RigidBody *rigidBody = &rigidBodies[i];
+        rigidBody->force = f;
+        rigidBody->torque = 0;
+    }
 }
 
 SDL_Texture *rigidBodyTextures[NUM_RIGID_BODIES];
@@ -840,7 +844,9 @@ int DetectPointToEdgeContact(
                 contactEdgeNormal = closestInnnerNormal;
                 penDepth = minInnerDist;
                 collisionDistanceTest = 1;
-                printf("inner contact %.3e\n", penDepth);
+                printf(
+                    "inner contact depth %.3e < eps %.3e\n",
+                    penDepth, CONTACT_DISTANCE);
             }
             else {
                 // this means penetration inside is too high
@@ -851,7 +857,8 @@ int DetectPointToEdgeContact(
                     // no coll points to be added
                     collisionDistanceTest = 2;
                 } else {
-                    // return 2;
+                    // printf("bad inner %.3e\n", minInnerDist);
+                    return 2;
                 }
             }
         } else {
@@ -860,12 +867,16 @@ int DetectPointToEdgeContact(
                 contactEdgeNormal = closestOutNormal;
                 penDepth = minOutDist;
                 collisionDistanceTest = 1;
-                printf("outer contact %.3e\n", penDepth);
+                printf(
+                    "outer contact depth %.3e < eps %.3e\n",
+                    penDepth, CONTACT_DISTANCE
+                );
             } else {
                 // too far outside is OK (but not for screen border)
                 // means no collision point to be added
                 if (body2->isScreenBorder) {
-                    // return 2;
+                    // printf("bad outer %.3e\n", minOutDist);
+                    return 2;
                 }
                 collisionDistanceTest = 2;
             }
@@ -895,7 +906,9 @@ int DetectPointToEdgeContact(
     return result;
 }
 
-void updateContactPoints() {
+// return 1 on if all contact points distance
+// is less than tolerance, 0 otherwise
+int updateContactPoints() {
 
     resetContactPoints();
     int checkCount = 0;
@@ -906,19 +919,21 @@ void updateContactPoints() {
             // if (firstId == secId) continue;
             // printf("%d check with %d\n", firstId, secId);
             int testResult = 0;
-            PointToEdgeContactPoint newContact;
-            if (DetectPointToEdgeContact(
-                    &rigidBodies[firstId], &rigidBodies[secId]) == 0)
+            testResult = DetectPointToEdgeContact(
+                    &rigidBodies[firstId], &rigidBodies[secId]);
+            if (testResult == 2) { return 0; }
+            if (testResult == 0)
             {
                 testResult = DetectPointToEdgeContact(
                     &rigidBodies[secId], &rigidBodies[firstId]);
-            } else {
-                testResult = 1;
+                if (testResult == 2) { return 0; }
             }
         }
     }
-    if (contactPointCount > 0 )
-        printf("contact point count %d\n", contactPointCount);
+    // if (contactPointCount > 0 ) {
+    //     printf("contact point count %d\n", contactPointCount);
+    // }
+    return 1;
 }
 
 void printAngleStuff() {
@@ -940,7 +955,6 @@ void printAngleStuff() {
 // to values based on current collision momentum impulse and 
 // andgular momentum pulse value
 void RunRigidBodySimulationMidpointV2(
-    SDL_Renderer *renderer,
     float dt
 ) {
     
@@ -1035,37 +1049,51 @@ int main() {
     // dt in seconds
     float dt = 0.01;
 
-    // InitializeRigidBodies(renderer);
-    InitializeTestRigidBodies(renderer);
-
-    SDL_Event e;
+    InitializeRigidBodies(renderer);
+    // InitializeTestRigidBodies(renderer);
+    // test for inner penetration at the start
+    // it is supposed we have no bad contact points 
+    // at the start
+    int cpUpdateResult = 0;
     int quit = 0;
+    cpUpdateResult = updateContactPoints();
+    if (cpUpdateResult == 0) {
+        printf(
+            "bad bodies configuration at the start, exiting\n"
+        );
+        quit = 1;
+    }
+    SDL_Event e;
     float timeBetweenRender = 1.0/25.0f;
     float frameTime = 0;
+    float previousSimTime = 0;
     while (quit == 0)
     {
-        if (simulationTime < totalSimulationTime)
+        
+        float smallerDt = dt;
+        cpUpdateResult = updateContactPoints();
+        
+        while (cpUpdateResult == 0)
         {
-            updateContactPoints();
-            // printf("contact points updated\n");
-            updateCollisionImpulses();
-
-            // compute external force , e.g. gravity
-            for (int i = 0; i < NUM_RIGID_BODIES; ++i)
-            {
-                ComputeForceAndTorque(
-                    simulationTime,
-                    &rigidBodies[i]
-                );
-            }
-            RunRigidBodySimulationMidpointV2(
-                renderer, dt);
-            // SDL_Delay(dt * 1000);
-            simulationTime += dt;
-
-            ++iterationCount;
-            frameTime += dt;
+            // simulate to
+            // timestamp = 0.5*(prevSimTime + simulationTime)
+            smallerDt *= 0.5;
+            simulationTime -= smallerDt;
+            ComputeForceAndTorque(simulationTime);
+            RunRigidBodySimulationMidpointV2(-smallerDt);
+            cpUpdateResult = updateContactPoints();
         }
+        updateCollisionImpulses();
+
+        // compute external force , e.g. gravity
+        ComputeForceAndTorque(simulationTime);
+        RunRigidBodySimulationMidpointV2(dt);
+        previousSimTime = simulationTime;
+        simulationTime += dt;
+
+        ++iterationCount;
+        frameTime += dt;
+
         if (frameTime > timeBetweenRender)
         {
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
