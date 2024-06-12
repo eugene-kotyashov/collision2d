@@ -287,6 +287,38 @@ void InitializeTestRigidBodies(SDL_Renderer *renderer)
         renderer,
         &rigidBodyTextures[i],
         &bodyCentersTextures[i]);
+
+    ++i;
+
+    setupRigidBody(
+        &rigidBodies[i],
+        (Vector2){0.3 * SCREEN_WIDTH, 0.6 * SCREEN_HEIGHT},
+        3e+4,
+        45,
+        100,
+        50,
+        (Vector2){50, 0},
+        0,
+        0,
+        renderer,
+        &rigidBodyTextures[i],
+        &bodyCentersTextures[i]);
+    
+    ++i;
+
+    setupRigidBody(
+        &rigidBodies[i],
+        (Vector2){0.6 * SCREEN_WIDTH, 0.6 * SCREEN_HEIGHT},
+        2e+4,
+        0,
+        200,
+        50,
+        (Vector2){50, 0},
+        -10,
+        0,
+        renderer,
+        &rigidBodyTextures[i],
+        &bodyCentersTextures[i]);
     
 }
 
@@ -1049,8 +1081,8 @@ int main() {
     // dt in seconds
     float dt = 0.01;
 
-    InitializeRigidBodies(renderer);
-    // InitializeTestRigidBodies(renderer);
+    // InitializeRigidBodies(renderer);
+    InitializeTestRigidBodies(renderer);
     // test for inner penetration at the start
     // it is supposed we have no bad contact points 
     // at the start
