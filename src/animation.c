@@ -80,7 +80,19 @@ PointToEdgeContactPoint contactPoints[MAX_CONTACT_POINTS];
 int contactPointCount;
 
 RigidBody rigidBodies[NUM_RIGID_BODIES];
+RigidBody oldRigidBodies[NUM_RIGID_BODIES];
 int iterationCount = 0;
+
+void CopyBodies(RigidBody* destBodies, RigidBody* srcBodies) {
+    for (int i=0; i< NUM_RIGID_BODIES; ++i) {
+        RigidBody *dst = &destBodies[i];
+        RigidBody *src = &srcBodies[i];
+        dst->position = src->position;
+        dst->angle = src->angle;
+        dst->linearVelocity = src->linearVelocity;
+        dst->angularVelocity = src->angularVelocity;
+    }
+}
 
 void resetContactPoints() {
     contactPointCount = 0;
@@ -1098,29 +1110,35 @@ int main() {
     SDL_Event e;
     float timeBetweenRender = 1.0/25.0f;
     float frameTime = 0;
-    float previousSimTime = 0;
+    float oldSimTime = simulationTime;
     while (quit == 0)
     {
         
         float smallerDt = dt;
         cpUpdateResult = updateContactPoints();
-        
+        int iterCount = 0;
         while (cpUpdateResult == 0)
         {
             // simulate to
             // timestamp = 0.5*(prevSimTime + simulationTime)
             smallerDt *= 0.5;
-            simulationTime -= smallerDt;
+            // restore old state
+            simulationTime = oldSimTime;
+            CopyBodies(rigidBodies, oldRigidBodies);
+            simulationTime += smallerDt;
             ComputeForceAndTorque(simulationTime);
-            RunRigidBodySimulationMidpointV2(-smallerDt);
+            RunRigidBodySimulationMidpointV2(smallerDt);
             cpUpdateResult = updateContactPoints();
+            ++iterCount;
         }
         updateCollisionImpulses();
 
         // compute external force , e.g. gravity
+        // save state for previous time step
+        CopyBodies(oldRigidBodies, rigidBodies);
+        oldSimTime = simulationTime;
         ComputeForceAndTorque(simulationTime);
         RunRigidBodySimulationMidpointV2(dt);
-        previousSimTime = simulationTime;
         simulationTime += dt;
 
         ++iterationCount;
