@@ -6,3 +6,5 @@ Only collisions with no zero normal projection of relative
 Midpoint method of solving 2d differential equations of motions is used.
 Demo is using bodies of rectangular shape.
 Visualization is done via SDL library.
+
+![](2dsim_latest_cut.gif)
